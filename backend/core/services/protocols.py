@@ -1,0 +1,13 @@
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class DatabaseServiceProtocol(Protocol):
+    async def execute(self, sql: str, params: tuple = ()) -> None: ...
+    async def query(self, sql: str, params: tuple = ()) -> list[dict]: ...
+
+
+@runtime_checkable
+class ParserServiceProtocol(Protocol):
+    def parse_text(self, text: str) -> list[dict]: ...
+    def parse_file(self, path: str) -> list[dict]: ...
