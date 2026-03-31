@@ -1,0 +1,14 @@
+# backend/plugins/mml_manager/plugin.toml
+[plugin]
+name = "mml_manager"
+version = "0.1.0"
+description = "MML 文件导入与管理"
+
+[plugin.backend]
+entry = "main.py"
+routes_prefix = "/api/plugins/mml_manager"
+
+[plugin.frontend]
+entry = "src/index.vue"
+menu_title = "MML 管理"
+icon = "document"
