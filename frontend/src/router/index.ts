@@ -13,6 +13,11 @@ const router = createRouter({
           name: "home",
           component: () => import("../views/HomeView.vue"),
         },
+        {
+          path: "plugins/mml-manager",
+          name: "mml-manager",
+          component: () => import("../views/plugins/MmlManager.vue"),
+        },
       ],
     },
   ],
