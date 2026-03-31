@@ -62,8 +62,10 @@ import {
   TrendingDownOutline,
   ServerOutline,
   TerminalOutline,
+  FileTrayStackedOutline,
 } from "@vicons/ionicons5";
 import { fetchPlugins, type PluginInfo, type MenuItem } from "../api";
+import { fetchMmlStats } from "../api/mml-manager";
 
 const router = useRouter();
 const loading = ref(true);
@@ -82,7 +84,7 @@ interface Metric {
 
 const metrics = ref<Metric[]>([]);
 
-function buildMetrics(plugins: PluginInfo[], menus: MenuItem[]): Metric[] {
+async function buildMetrics(plugins: PluginInfo[], menus: MenuItem[]): Promise<Metric[]> {
   const result: Metric[] = [
     {
       key: "plugins",
@@ -104,7 +106,7 @@ function buildMetrics(plugins: PluginInfo[], menus: MenuItem[]): Metric[] {
     },
   ];
 
-  // 为每个插件生成一个指标卡片（占位数据，后续由插件提供真实数据）
+  // Plugin icon / color / label maps
   const pluginIconMap: Record<string, Component> = {
     mml_manager: DocumentTextOutline,
     version_diff: GitCompareOutline,
@@ -119,7 +121,6 @@ function buildMetrics(plugins: PluginInfo[], menus: MenuItem[]): Metric[] {
     script_gen: { bg: "rgba(245, 158, 11, 0.15)", color: "#F59E0B" },
     validator: { bg: "rgba(239, 68, 68, 0.15)", color: "#EF4444" },
   };
-
   const placeholderLabels: Record<string, string> = {
     mml_manager: "MML 脚本",
     version_diff: "版本对比",
@@ -128,20 +129,53 @@ function buildMetrics(plugins: PluginInfo[], menus: MenuItem[]): Metric[] {
     validator: "校验规则",
   };
 
+  // Fetch MML stats for the mml_manager card
+  let mmlStats: { file_count: number; ne_version_count: number } | null = null;
+  try {
+    mmlStats = await fetchMmlStats();
+  } catch {
+    // stats not available, will use placeholder
+  }
+
   for (const plugin of plugins) {
     const menu = menus.find((m) => m.path === `/plugins/${plugin.name.replace(/_/g, "-")}`);
     const colors = pluginColorMap[plugin.name] || { bg: "rgba(37, 99, 235, 0.15)", color: "#3B82F6" };
-    result.push({
-      key: plugin.name,
-      label: placeholderLabels[plugin.name] || plugin.name,
-      value: "--",
-      sub: plugin.description,
-      icon: pluginIconMap[plugin.name] || TerminalOutline,
-      bgColor: colors.bg,
-      iconColor: colors.color,
-      link: menu?.path,
-    });
+
+    if (plugin.name === "mml_manager" && mmlStats) {
+      result.push({
+        key: plugin.name,
+        label: placeholderLabels[plugin.name] || plugin.name,
+        value: mmlStats.file_count,
+        sub: `${mmlStats.ne_version_count} 个网元版本`,
+        icon: pluginIconMap[plugin.name] || TerminalOutline,
+        bgColor: colors.bg,
+        iconColor: colors.color,
+        link: menu?.path,
+      });
+    } else {
+      result.push({
+        key: plugin.name,
+        label: placeholderLabels[plugin.name] || plugin.name,
+        value: "--",
+        sub: plugin.description,
+        icon: pluginIconMap[plugin.name] || TerminalOutline,
+        bgColor: colors.bg,
+        iconColor: colors.color,
+        link: menu?.path,
+      });
+    }
   }
+
+  // Database management placeholder
+  result.push({
+    key: "database",
+    label: "数据库管理",
+    value: "即将推出",
+    sub: undefined,
+    icon: FileTrayStackedOutline,
+    bgColor: "rgba(71, 85, 105, 0.15)",
+    iconColor: "#475569",
+  });
 
   return result;
 }
@@ -149,7 +183,7 @@ function buildMetrics(plugins: PluginInfo[], menus: MenuItem[]): Metric[] {
 onMounted(async () => {
   try {
     const res = await fetchPlugins();
-    metrics.value = buildMetrics(res.plugins, res.menus);
+    metrics.value = await buildMetrics(res.plugins, res.menus);
   } catch (e) {
     console.error(e);
     metrics.value = [];
