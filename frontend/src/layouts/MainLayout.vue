@@ -155,7 +155,7 @@ const menuOptions = computed<MenuOption[]>(() => {
     return [
       ...coreItems,
       { type: "divider", key: "d1" },
-      { label: "插件", key: "plugin-group", icon: () => h(TerminalOutline), children: pluginItems },
+      { label: "功能模块", key: "plugin-group", icon: () => h(TerminalOutline), children: pluginItems },
     ];
   }
   return coreItems;

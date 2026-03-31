@@ -10,122 +10,149 @@
         <h1 class="hero-title">CoreMaster</h1>
         <p class="hero-desc">核心网 MML 配置管理与数据挖掘平台</p>
       </div>
-      <div class="hero-decoration">
-        <div class="code-block">
-          <div class="code-line">
-            <span class="code-keyword">ADD</span>
-            <span class="code-cmd">APN</span><span class="code-colon">:</span>
-          </div>
-          <div class="code-line code-indent">
-            <span class="code-param">APN</span><span class="code-eq">=</span><span class="code-val">"cmnet"</span><span class="code-comma">,</span>
-          </div>
-          <div class="code-line code-indent">
-            <span class="code-param">BINDVPN</span><span class="code-eq">=</span><span class="code-val">ENABLE</span><span class="code-comma">,</span>
-          </div>
-          <div class="code-line code-indent">
-            <span class="code-param">VRFNAME</span><span class="code-eq">=</span><span class="code-val">"vpn_5gc"</span><span class="code-semi">;</span>
-          </div>
-        </div>
-      </div>
     </div>
 
-    <!-- Stats -->
-    <div class="stats-row">
-      <div class="stat-card">
-        <div class="stat-icon" style="background: rgba(37, 99, 235, 0.15); color: #3B82F6;">
-          <n-icon size="20"><terminal-outline /></n-icon>
-        </div>
-        <div class="stat-info">
-          <div class="stat-value">{{ pluginCount }}</div>
-          <div class="stat-label">已加载插件</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon" style="background: rgba(249, 115, 22, 0.15); color: #F97316;">
-          <n-icon size="20"><server-outline /></n-icon>
-        </div>
-        <div class="stat-info">
-          <div class="stat-value">{{ serviceCount }}</div>
-          <div class="stat-label">公共服务</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon" style="background: rgba(34, 197, 94, 0.15); color: #22C55E;">
-          <n-icon size="20"><checkmark-circle-outline /></n-icon>
-        </div>
-        <div class="stat-info">
-          <div class="stat-value">{{ apiVersion }}</div>
-          <div class="stat-label">API 版本</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Plugins Grid -->
-    <div class="section-header">
-      <h2 class="section-title">功能模块</h2>
-      <span class="section-subtitle">从左侧菜单进入各模块</span>
-    </div>
-    <div class="plugin-grid">
+    <!-- Metrics Grid -->
+    <div class="metrics-grid">
       <div
-        v-for="plugin in plugins"
-        :key="plugin.name"
-        class="plugin-card"
-        @click="navigateTo(plugin)"
+        v-for="metric in metrics"
+        :key="metric.key"
+        class="metric-card"
+        :class="{ clickable: metric.link }"
+        @click="metric.link && router.push(metric.link)"
       >
-        <div class="plugin-card-icon">
-          <n-icon size="24"><terminal-outline /></n-icon>
+        <div class="metric-header">
+          <div class="metric-icon" :style="{ background: metric.bgColor, color: metric.iconColor }">
+            <n-icon size="20"><component :is="metric.icon" /></n-icon>
+          </div>
+          <div class="metric-trend" v-if="metric.trend">
+            <n-icon size="14" :color="metric.trend > 0 ? '#22C55E' : '#EF4444'">
+              <trending-up-outline v-if="metric.trend > 0" />
+              <trending-down-outline v-else />
+            </n-icon>
+          </div>
         </div>
-        <div class="plugin-card-body">
-          <div class="plugin-card-name">{{ plugin.name }}</div>
-          <div class="plugin-card-desc">{{ plugin.description }}</div>
-        </div>
-        <div class="plugin-card-arrow">
-          <n-icon size="16"><arrow-forward-outline /></n-icon>
-        </div>
+        <div class="metric-value">{{ metric.value }}</div>
+        <div class="metric-label">{{ metric.label }}</div>
+        <div class="metric-sub" v-if="metric.sub">{{ metric.sub }}</div>
       </div>
     </div>
 
     <!-- Empty state -->
-    <div v-if="plugins.length === 0 && !loading" class="empty-state">
+    <div v-if="!loading && metrics.length === 0" class="empty-state">
       <n-icon size="48" color="#334155"><cloud-offline-outline /></n-icon>
-      <p class="empty-title">暂无插件</p>
-      <p class="empty-desc">请确认后端服务已启动</p>
+      <p class="empty-title">无法连接后端服务</p>
+      <p class="empty-desc">请确认后端已启动：python -m uvicorn main:app --port 8000</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, type Component } from "vue";
 import { useRouter } from "vue-router";
 import { NIcon } from "naive-ui";
 import {
-  TerminalOutline,
-  ServerOutline,
+  DocumentTextOutline,
+  GitCompareOutline,
+  ScanOutline,
+  CreateOutline,
   CheckmarkCircleOutline,
-  ArrowForwardOutline,
   CloudOfflineOutline,
+  TrendingUpOutline,
+  TrendingDownOutline,
+  ServerOutline,
+  TerminalOutline,
 } from "@vicons/ionicons5";
-import { fetchPlugins, type PluginInfo } from "../api";
+import { fetchPlugins, type PluginInfo, type MenuItem } from "../api";
 
 const router = useRouter();
-const plugins = ref<PluginInfo[]>([]);
-const pluginCount = ref(0);
-const serviceCount = ref(3);
-const apiVersion = ref("v0.1");
 const loading = ref(true);
 
-function navigateTo(plugin: PluginInfo) {
-  // For now navigate by plugin name convention
-  router.push(`/plugins/${plugin.name.replace(/_/g, "-")}`);
+interface Metric {
+  key: string;
+  label: string;
+  value: string | number;
+  sub?: string;
+  icon: Component;
+  bgColor: string;
+  iconColor: string;
+  trend?: number;
+  link?: string;
+}
+
+const metrics = ref<Metric[]>([]);
+
+function buildMetrics(plugins: PluginInfo[], menus: MenuItem[]): Metric[] {
+  const result: Metric[] = [
+    {
+      key: "plugins",
+      label: "功能模块",
+      value: plugins.length,
+      sub: `${plugins.length} 个模块已加载`,
+      icon: TerminalOutline,
+      bgColor: "rgba(37, 99, 235, 0.15)",
+      iconColor: "#3B82F6",
+    },
+    {
+      key: "services",
+      label: "公共服务",
+      value: "3",
+      sub: "数据库 / 解析器 / 配置",
+      icon: ServerOutline,
+      bgColor: "rgba(249, 115, 22, 0.15)",
+      iconColor: "#F97316",
+    },
+  ];
+
+  // 为每个插件生成一个指标卡片（占位数据，后续由插件提供真实数据）
+  const pluginIconMap: Record<string, Component> = {
+    mml_manager: DocumentTextOutline,
+    version_diff: GitCompareOutline,
+    mml_graph: ScanOutline,
+    script_gen: CreateOutline,
+    validator: CheckmarkCircleOutline,
+  };
+  const pluginColorMap: Record<string, { bg: string; color: string }> = {
+    mml_manager: { bg: "rgba(34, 197, 94, 0.15)", color: "#22C55E" },
+    version_diff: { bg: "rgba(168, 85, 247, 0.15)", color: "#A855F7" },
+    mml_graph: { bg: "rgba(6, 182, 212, 0.15)", color: "#06B6D4" },
+    script_gen: { bg: "rgba(245, 158, 11, 0.15)", color: "#F59E0B" },
+    validator: { bg: "rgba(239, 68, 68, 0.15)", color: "#EF4444" },
+  };
+
+  const placeholderLabels: Record<string, string> = {
+    mml_manager: "MML 脚本",
+    version_diff: "版本对比",
+    mml_graph: "图谱节点",
+    script_gen: "生成模板",
+    validator: "校验规则",
+  };
+
+  for (const plugin of plugins) {
+    const menu = menus.find((m) => m.path === `/plugins/${plugin.name.replace(/_/g, "-")}`);
+    const colors = pluginColorMap[plugin.name] || { bg: "rgba(37, 99, 235, 0.15)", color: "#3B82F6" };
+    result.push({
+      key: plugin.name,
+      label: placeholderLabels[plugin.name] || plugin.name,
+      value: "--",
+      sub: plugin.description,
+      icon: pluginIconMap[plugin.name] || TerminalOutline,
+      bgColor: colors.bg,
+      iconColor: colors.color,
+      link: menu?.path,
+    });
+  }
+
+  return result;
 }
 
 onMounted(async () => {
   try {
     const res = await fetchPlugins();
-    plugins.value = res.plugins;
-    pluginCount.value = res.plugins.length;
+    metrics.value = buildMetrics(res.plugins, res.menus);
   } catch (e) {
     console.error(e);
+    metrics.value = [];
   } finally {
     loading.value = false;
   }
@@ -140,18 +167,11 @@ onMounted(async () => {
 
 /* Hero */
 .hero-section {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 40px;
   padding: 32px 40px;
   background: linear-gradient(135deg, #1a1d27 0%, #16181f 100%);
   border: 1px solid #1e2028;
   border-radius: 16px;
   margin-bottom: 24px;
-}
-.hero-content {
-  flex: 1;
 }
 .hero-badge {
   display: inline-flex;
@@ -186,144 +206,63 @@ onMounted(async () => {
   line-height: 1.6;
 }
 
-/* Code decoration */
-.hero-decoration {
-  flex-shrink: 0;
-}
-.code-block {
-  font-family: 'Fira Code', monospace;
-  font-size: 13px;
-  line-height: 1.8;
-  padding: 16px 20px;
-  background: #0c0d11;
-  border: 1px solid #1e2028;
-  border-radius: 10px;
-  min-width: 280px;
-}
-.code-keyword { color: #f97316; font-weight: 600; }
-.code-cmd { color: #60a5fa; }
-.code-colon { color: #64748b; }
-.code-eq { color: #64748b; }
-.code-param { color: #94a3b8; }
-.code-val { color: #22c55e; }
-.code-comma { color: #475569; }
-.code-semi { color: #475569; }
-.code-indent { padding-left: 28px; }
-
-/* Stats */
-.stats-row {
+/* Metrics Grid */
+.metrics-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 16px;
-  margin-bottom: 32px;
 }
-.stat-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
+.metric-card {
   padding: 20px;
   background: #16181f;
   border: 1px solid #1e2028;
   border-radius: 12px;
-  transition: border-color 0.2s ease;
-}
-.stat-card:hover {
-  border-color: #2a2d38;
-}
-.stat-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.stat-value {
-  font-family: 'Fira Code', monospace;
-  font-size: 20px;
-  font-weight: 600;
-  color: #e2e8f0;
-}
-.stat-label {
-  font-size: 13px;
-  color: #64748b;
-  margin-top: 2px;
-}
-
-/* Section */
-.section-header {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-.section-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #e2e8f0;
-}
-.section-subtitle {
-  font-size: 13px;
-  color: #475569;
-}
-
-/* Plugin Grid */
-.plugin-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.plugin-card {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 16px 20px;
-  background: #16181f;
-  border: 1px solid #1e2028;
-  border-radius: 12px;
-  cursor: pointer;
   transition: all 0.2s ease;
 }
-.plugin-card:hover {
+.metric-card.clickable {
+  cursor: pointer;
+}
+.metric-card.clickable:hover {
   border-color: #2563EB;
   background: #1a1d27;
-  transform: translateX(4px);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
 }
-.plugin-card:hover .plugin-card-arrow {
-  color: #2563EB;
-  opacity: 1;
+.metric-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
 }
-.plugin-card-icon {
-  width: 44px;
-  height: 44px;
+.metric-icon {
+  width: 40px;
+  height: 40px;
   border-radius: 10px;
-  background: rgba(37, 99, 235, 0.1);
-  color: #3B82F6;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
 }
-.plugin-card-body {
-  flex: 1;
-  min-width: 0;
+.metric-trend {
+  display: flex;
+  align-items: center;
 }
-.plugin-card-name {
+.metric-value {
   font-family: 'Fira Code', monospace;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 28px;
+  font-weight: 700;
   color: #e2e8f0;
+  margin-bottom: 4px;
 }
-.plugin-card-desc {
+.metric-label {
   font-size: 13px;
   color: #64748b;
-  margin-top: 4px;
 }
-.plugin-card-arrow {
+.metric-sub {
+  font-size: 12px;
   color: #475569;
-  opacity: 0;
-  transition: all 0.2s ease;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #1e2028;
 }
 
 /* Empty */
@@ -342,5 +281,6 @@ onMounted(async () => {
 .empty-desc {
   font-size: 13px;
   color: #475569;
+  font-family: 'Fira Code', monospace;
 }
 </style>
