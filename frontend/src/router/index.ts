@@ -23,6 +23,11 @@ const router = createRouter({
           name: "db-manager",
           component: () => import("../views/plugins/DbManager.vue"),
         },
+        {
+          path: "plugins/dependency-mining",
+          name: "dependency-mining",
+          component: () => import("../views/plugins/DependencyMining.vue"),
+        },
       ],
     },
   ],

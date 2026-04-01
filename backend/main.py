@@ -86,6 +86,14 @@ async def list_plugins():
             "icon": frontend.get("icon", ""),
             "path": path,
         })
+    # MVP: dependency mining is embedded in mml_manager, register as virtual plugin
+    plugins.append({
+        "name": "dependency_mining",
+        "description": "MML 命令参数依赖关系挖掘与审核",
+        "menu_title": "依赖挖掘",
+        "icon": "git-branch",
+        "path": "/plugins/dependency-mining",
+    })
     return {"plugins": plugins}
 
 

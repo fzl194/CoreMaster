@@ -100,6 +100,7 @@ import {
   DocumentTextOutline,
   TerminalOutline,
   ServerOutline,
+  GitBranchOutline,
 } from "@vicons/ionicons5";
 
 const router = useRouter();
@@ -118,6 +119,7 @@ const iconMap: Record<string, any> = {
   home: HomeOutline,
   document: DocumentTextOutline,
   database: ServerOutline,
+  "git-branch": GitBranchOutline,
 };
 
 const currentTitle = computed(() => {
