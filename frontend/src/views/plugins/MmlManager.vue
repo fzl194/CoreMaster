@@ -398,7 +398,7 @@ const entryColumns = computed<DataTableColumns<FileEntry>>(() => [
     key: "vendor",
     width: 120,
     render(row) {
-      return h("span", { style: "color: #64748B" }, row.vendor ?? "—");
+      return h("span", { style: "color: #64748B" }, row.ne_type ?? "—");
     },
   },
   {
