@@ -10,16 +10,24 @@ export interface NeVersion {
   created_at: string;
 }
 
-export interface MmlFile {
+export interface FileEntry {
   id: number;
-  filename: string;
-  ne_version_id: number;
+  parent_id: number | null;
+  name: string;
+  type: "folder" | "file";
+  ne_version_id: number | null;
   file_size: number;
+  description: string | null;
   created_at: string;
   updated_at: string;
-  vendor: string;
-  ne_type: string;
-  ne_version: string;
+  vendor: string | null;
+  ne_type: string | null;
+  version: string | null;
+}
+
+export interface PathSegment {
+  id: number;
+  name: string;
 }
 
 export interface MmlStats {
@@ -34,29 +42,36 @@ export async function fetchNeVersions(): Promise<NeVersion[]> {
   return data;
 }
 
-export async function createNeVersion(payload: {
-  ne_type: string;
-  version: string;
-  vendor?: string;
-}): Promise<NeVersion> {
-  const { data } = await api.post<NeVersion>("/plugins/mml_manager/ne-versions", payload);
+// ── Entries (Directory Browsing) ────────────────────────────────────────────
+
+export async function fetchEntries(parentId?: number | null): Promise<FileEntry[]> {
+  const params: Record<string, unknown> = {};
+  if (parentId !== undefined && parentId !== null) {
+    params.parent_id = parentId;
+  }
+  const { data } = await api.get<FileEntry[]>("/plugins/mml_manager/entries", { params });
   return data;
 }
 
-export async function deleteNeVersion(id: number): Promise<void> {
-  await api.delete(`/plugins/mml_manager/ne-versions/${id}`);
+export async function fetchEntryPath(entryId: number): Promise<PathSegment[]> {
+  const { data } = await api.get<PathSegment[]>(`/plugins/mml_manager/entries/${entryId}/path`);
+  return data;
+}
+
+export async function createFolder(name: string, parentId?: number | null): Promise<FileEntry> {
+  const payload: Record<string, unknown> = { name, type: "folder" };
+  if (parentId !== undefined && parentId !== null) {
+    payload.parent_id = parentId;
+  }
+  const { data } = await api.post<FileEntry>("/plugins/mml_manager/entries", payload);
+  return data;
+}
+
+export async function deleteEntry(entryId: number): Promise<void> {
+  await api.delete(`/plugins/mml_manager/entries/${entryId}`);
 }
 
 // ── Files ───────────────────────────────────────────────────────────────────
-
-export async function fetchFiles(neVersionId?: number): Promise<MmlFile[]> {
-  const params: Record<string, unknown> = {};
-  if (neVersionId !== undefined) {
-    params.ne_version_id = neVersionId;
-  }
-  const { data } = await api.get<MmlFile[]>("/plugins/mml_manager/files", { params });
-  return data;
-}
 
 export async function getFileContent(id: number): Promise<string> {
   const { data } = await api.get<{ content: string }>(`/plugins/mml_manager/files/${id}/content`);
@@ -67,26 +82,28 @@ export async function updateFileContent(id: number, content: string): Promise<vo
   await api.put(`/plugins/mml_manager/files/${id}/content`, { content });
 }
 
-export async function deleteFile(id: number): Promise<void> {
-  await api.delete(`/plugins/mml_manager/files/${id}`);
-}
-
-export async function uploadFiles(
-  neVersionId: number,
-  files: File[],
-): Promise<{ count: number; uploaded: MmlFile[] }> {
-  const formData = new FormData();
-  files.forEach((f) => formData.append("files", f));
-  const { data } = await api.post<{ count: number; uploaded: MmlFile[] }>(
-    `/plugins/mml_manager/upload`,
-    formData,
-    { params: { ne_version_id: neVersionId } },
-  );
+export async function updateFileMeta(id: number, payload: { ne_version_id?: number; name?: string }): Promise<FileEntry> {
+  const { data } = await api.put<FileEntry>(`/plugins/mml_manager/files/${id}`, payload);
   return data;
 }
 
 export function getFileDownloadUrl(id: number): string {
   return `http://localhost:8000/api/plugins/mml_manager/files/${id}/download`;
+}
+
+export async function uploadFiles(
+  parentId: number | null | undefined,
+  files: { file: File; neVersionId: number }[],
+): Promise<FileEntry[]> {
+  const formData = new FormData();
+  const items: Record<string, { ne_version_id: number }> = {};
+  for (const item of files) {
+    formData.append("files", item.file);
+    items[item.file.name] = { ne_version_id: item.neVersionId };
+  }
+  formData.append("metadata", JSON.stringify({ parent_id: parentId ?? null, items }));
+  const { data } = await api.post<FileEntry[]>("/plugins/mml_manager/upload", formData);
+  return data;
 }
 
 // ── Stats ───────────────────────────────────────────────────────────────────
