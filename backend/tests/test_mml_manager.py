@@ -93,7 +93,7 @@ async def _create_ne_version(client, vendor="huawei", ne_type="5GC", version="V1
 
 
 async def _upload_file(client, filename, content, ne_version_id, parent_id=None):
-    """Helper: upload a single file via the new upload endpoint, return (entries, resp)."""
+    """Helper: upload a single file via the upload endpoint, return (uploaded_entries, resp)."""
     metadata = json.dumps({
         "parent_id": parent_id,
         "items": {
@@ -105,7 +105,8 @@ async def _upload_file(client, filename, content, ne_version_id, parent_id=None)
         data={"metadata": metadata},
         files={"files": (filename, content, "text/plain")},
     )
-    return resp.json(), resp
+    data = resp.json()
+    return data.get("uploaded", []), resp
 
 
 # ── 1. NE Version CRUD ─────────────────────────────────────────────────────
@@ -329,7 +330,8 @@ async def test_12_upload_multiple_with_different_versions(client):
         ],
     )
     assert resp.status_code == 200
-    entries = resp.json()
+    data = resp.json()
+    entries = data["uploaded"]
     assert len(entries) == 2
     names = {e["name"] for e in entries}
     assert "multi_a.mml" in names
@@ -356,9 +358,9 @@ async def test_13_upload_rejects_no_ne_version(client):
         files={"files": ("no_version.mml", b"no version", "text/plain")},
     )
     assert resp.status_code == 200
-    entries = resp.json()
+    data = resp.json()
     # The file should be skipped since the referenced ne_version_id does not exist
-    assert len(entries) == 0
+    assert len(data["uploaded"]) == 0
 
 
 @pytest.mark.asyncio
@@ -380,7 +382,9 @@ async def test_14_upload_rejects_bad_extension(client):
         files={"files": ("bad.py", b"print('hi')", "text/plain")},
     )
     assert resp.status_code == 200
-    assert resp.json() == []
+    data = resp.json()
+    assert len(data["uploaded"]) == 0
+    assert len(data["failed"]) == 1
 
 
 # ── 15-18. File Content & Meta Operations ───────────────────────────────────

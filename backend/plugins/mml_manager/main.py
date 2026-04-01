@@ -11,6 +11,16 @@ from core.services.database import DatabaseService
 MML_STORAGE_ROOT = Path(__file__).resolve().parent.parent.parent / "data" / "mml_files"
 
 
+def _safe_file_path(file_path: str | None) -> Path | None:
+    """校验 file_path 是否位于 MML_STORAGE_ROOT 下，防止路径穿越。"""
+    if not file_path:
+        return None
+    resolved = Path(file_path).resolve()
+    if not str(resolved).startswith(str(MML_STORAGE_ROOT)):
+        return None
+    return resolved
+
+
 class Plugin:
     def __init__(self):
         self.router = APIRouter()
@@ -242,9 +252,9 @@ class Plugin:
                 file_rows = await self.db.query(
                     "SELECT file_path FROM file_entry WHERE id=?", (entry_id,)
                 )
-                if file_rows and file_rows[0]["file_path"]:
-                    p = Path(file_rows[0]["file_path"])
-                    if p.exists():
+                if file_rows:
+                    p = _safe_file_path(file_rows[0]["file_path"])
+                    if p and p.exists():
                         p.unlink()
                 await self.db.execute("DELETE FROM file_entry WHERE id=?", (entry_id,))
             else:
@@ -269,9 +279,9 @@ class Plugin:
                         file_rows = await self.db.query(
                             "SELECT file_path FROM file_entry WHERE id=?", (eid,)
                         )
-                        if file_rows and file_rows[0]["file_path"]:
-                            p = Path(file_rows[0]["file_path"])
-                            if p.exists():
+                        if file_rows:
+                            p = _safe_file_path(file_rows[0]["file_path"])
+                            if p and p.exists():
                                 p.unlink()
 
                 # Delete disk directories for all folder-type entries (children first)
@@ -329,16 +339,19 @@ class Plugin:
             storage_dir.mkdir(parents=True, exist_ok=True)
 
             uploaded = []
+            failed = []
             for f in files:
                 filename = f.filename
                 suffix = Path(filename).suffix.lower()
 
                 # Validate extension
                 if suffix not in (".mml", ".txt"):
+                    failed.append({"filename": filename, "reason": "不支持的文件类型"})
                     continue
 
                 # Validate file has corresponding item in metadata
                 if filename not in items:
+                    failed.append({"filename": filename, "reason": "元数据中缺少该文件"})
                     continue
 
                 item_meta = items[filename]
@@ -350,6 +363,7 @@ class Plugin:
                         "SELECT id FROM ne_version WHERE id=?", (ne_version_id,)
                     )
                     if not ne_rows:
+                        failed.append({"filename": filename, "reason": "网元版本不存在"})
                         continue
 
                 content_bytes = await f.read()
@@ -368,13 +382,21 @@ class Plugin:
                     (parent_id, filename),
                 )
                 if not rows:
+                    failed.append({"filename": filename, "reason": "数据库写入失败"})
                     continue
                 entry_id = rows[0]["id"]
 
                 # Store on disk using entry_id as filename
                 disk_filename = f"{entry_id}{suffix}"
                 disk_path = storage_dir / disk_filename
-                disk_path.write_bytes(content_bytes)
+
+                try:
+                    disk_path.write_bytes(content_bytes)
+                except OSError:
+                    # 磁盘写入失败，回滚数据库记录
+                    await self.db.execute("DELETE FROM file_entry WHERE id=?", (entry_id,))
+                    failed.append({"filename": filename, "reason": "磁盘写入失败"})
+                    continue
 
                 # Update file_path in database
                 await self.db.execute(
@@ -394,7 +416,7 @@ class Plugin:
                 if result_rows:
                     uploaded.append(result_rows[0])
 
-            return uploaded
+            return {"uploaded": uploaded, "failed": failed}
 
         # ── File Content Operations ─────────────────────────────────────
 
@@ -406,8 +428,8 @@ class Plugin:
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"detail": "文件不存在"})
-            p = Path(rows[0]["file_path"])
-            if not p.exists():
+            p = _safe_file_path(rows[0]["file_path"])
+            if p is None or not p.exists():
                 return JSONResponse(status_code=404, content={"detail": "磁盘文件不存在"})
             content = p.read_text(encoding="utf-8")
             return {"content": content}
@@ -420,7 +442,9 @@ class Plugin:
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"detail": "文件不存在"})
-            p = Path(rows[0]["file_path"])
+            p = _safe_file_path(rows[0]["file_path"])
+            if p is None:
+                return JSONResponse(status_code=400, content={"detail": "文件路径无效"})
             p.parent.mkdir(parents=True, exist_ok=True)
             new_content = payload["content"]
             p.write_text(new_content, encoding="utf-8")
@@ -438,8 +462,8 @@ class Plugin:
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"detail": "文件不存在"})
-            p = Path(rows[0]["file_path"])
-            if not p.exists():
+            p = _safe_file_path(rows[0]["file_path"])
+            if p is None or not p.exists():
                 return JSONResponse(status_code=404, content={"detail": "磁盘文件不存在"})
             return FileResponse(str(p), filename=rows[0]["name"])
 

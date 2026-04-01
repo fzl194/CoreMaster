@@ -81,10 +81,15 @@ export function getFileDownloadUrl(id: number): string {
   return `http://localhost:8000/api/plugins/mml_manager/files/${id}/download`;
 }
 
+export interface UploadResult {
+  uploaded: FileEntry[];
+  failed: { filename: string; reason: string }[];
+}
+
 export async function uploadFiles(
   parentId: number | null | undefined,
   files: { file: File; neVersionId: number }[],
-): Promise<FileEntry[]> {
+): Promise<UploadResult> {
   const formData = new FormData();
   const items: Record<string, { ne_version_id: number }> = {};
   for (const item of files) {
@@ -92,7 +97,7 @@ export async function uploadFiles(
     items[item.file.name] = { ne_version_id: item.neVersionId };
   }
   formData.append("metadata", JSON.stringify({ parent_id: parentId ?? null, items }));
-  const { data } = await api.post<FileEntry[]>("/plugins/mml_manager/upload", formData);
+  const { data } = await api.post<UploadResult>("/plugins/mml_manager/upload", formData);
   return data;
 }
 

@@ -601,8 +601,13 @@ async function doUpload() {
         file: item.file!,
         neVersionId: item.neVersionId!,
       }));
-    await uploadFiles(currentParentId.value, files);
-    message.success(`成功上传 ${files.length} 个文件`);
+    const result = await uploadFiles(currentParentId.value, files);
+    if (result.failed.length > 0) {
+      const names = result.failed.map((f) => f.filename).join(", ");
+      message.warning(`${result.uploaded.length} 个文件上传成功，${result.failed.length} 个失败: ${names}`);
+    } else {
+      message.success(`成功上传 ${result.uploaded.length} 个文件`);
+    }
     showUploadModal.value = false;
     uploadFileList.value = [];
     globalVersionId.value = null;

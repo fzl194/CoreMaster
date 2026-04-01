@@ -13,6 +13,7 @@ class DatabaseService:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = await aiosqlite.connect(self._db_path)
         self._conn.row_factory = aiosqlite.Row
+        await self._conn.execute("PRAGMA foreign_keys = ON")
 
     async def stop(self) -> None:
         if self._conn:
