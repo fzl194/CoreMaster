@@ -68,6 +68,21 @@
 | `AGENT_MESSAGES.md` | 消息索引 / 最近消息摘要 | 多方共享，只追加摘要，不写完整对话 |
 | `docs/messages/<task-id>.md` | 单任务对话记录 | 多方共享，只追加，不改历史正文 |
 
+### 5.3 管理员文档
+
+管理员文档路径约定：
+
+- `docs/admin/YYYY-MM-DD-<topic-slug>-admin-note.md`
+
+建议至少包含：
+
+- 背景
+- 决策事项
+- 影响范围
+- 相关任务或文档
+- 直接执行的操作
+- 需要 Claude 或 Codex 跟进的事项
+
 ## 6. 共享文件并发规则
 
 这是避免多人同时编辑同一文件导致信息错误的核心规则。
@@ -126,6 +141,21 @@
 - 每条消息必须带时间、From、To、类型
 - 长沟通优先写这里，不写到 `AGENT_MESSAGES.md`
 
+## 6.4 handoff 状态流转
+
+为了保证 Claude 与 Codex 的协作闭环可追踪，`docs/handoffs/*claude-handoff.md` 需要保留明确状态流转：
+
+- Claude 创建 handoff 时，状态标记为：`待 Codex 审查`
+- Codex 完成审查后，状态更新为：`已审查`
+- Claude 根据 review 完成修复后，不回写 handoff 状态，只新增 fix 文档
+- Codex 确认修复闭环后，状态更新为：`已处置` 或 `部分处置`
+
+补充规则：
+
+- handoff 的初始正文由 Claude 维护
+- handoff 的状态回写和最终处置结论由 Codex 维护
+- 如管理员介入影响结论，应通过管理员文档或相关文档中的“管理员介入记录”说明，不直接替代 Claude/Codex 的专属结论
+
 ## 7. 文档膨胀控制
 
 - 短沟通写 `docs/messages/<task-id>.md`
@@ -133,6 +163,7 @@
 - 正式结论只写 plan / handoff / review / fix / admin-note
 - 同一任务未进入新阶段时，优先更新原文档，不新增新文档
 - `COLLAB_TASKS.md` 负责告诉所有人“当前这个任务该看哪些文件”
+- `COLLAB_TASKS.md` 的字段和记录格式以该文件内模板为准，不在 `TEAM.md` 中重复维护一份副本
 
 ## 8. Git 规则
 
@@ -156,4 +187,3 @@
 2. 任务对应设计文档 / 实现计划
 3. 本 `TEAM.md`
 4. `CLAUDE.md` / `AGENTS.md`
-
