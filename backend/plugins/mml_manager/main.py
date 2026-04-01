@@ -65,6 +65,94 @@ class Plugin:
             )
         """)
 
+        # ── Dependency Mining Tables ──────────────────────────────────
+
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS command_instance (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_entry_id INTEGER NOT NULL REFERENCES file_entry(id) ON DELETE CASCADE,
+                ne_version_id INTEGER NOT NULL REFERENCES ne_version(id),
+                command_index INTEGER NOT NULL,
+                operation TEXT NOT NULL,
+                name TEXT NOT NULL,
+                params_json TEXT NOT NULL,
+                line_number INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS dependency_candidate (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ne_version_id INTEGER NOT NULL REFERENCES ne_version(id),
+                ref_command TEXT NOT NULL,
+                ref_param TEXT NOT NULL,
+                def_command TEXT NOT NULL,
+                def_param TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                confidence REAL NOT NULL,
+                scores_json TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                source_batch TEXT,
+                review_history_json TEXT DEFAULT '[]',
+                graph_edge_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ne_version_id, ref_command, ref_param, def_command, def_param)
+            )
+        """)
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS graph_edge (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ne_version_id INTEGER NOT NULL REFERENCES ne_version(id),
+                ref_command TEXT NOT NULL,
+                ref_param TEXT NOT NULL,
+                def_command TEXT NOT NULL,
+                def_param TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                source TEXT NOT NULL DEFAULT 'mined',
+                confidence REAL NOT NULL,
+                evidence_json TEXT NOT NULL,
+                confirmed_by TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ne_version_id, ref_command, ref_param, def_command, def_param)
+            )
+        """)
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS graph_changelog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dependency_id INTEGER REFERENCES graph_edge(id),
+                candidate_id INTEGER REFERENCES dependency_candidate(id),
+                change_type TEXT NOT NULL,
+                snapshot_before TEXT,
+                snapshot_after TEXT,
+                trigger_type TEXT NOT NULL DEFAULT 'human',
+                trigger_id TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cmd_inst_file ON command_instance(file_entry_id)"
+        )
+        await self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cmd_inst_ne ON command_instance(ne_version_id)"
+        )
+        await self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cand_status ON dependency_candidate(status)"
+        )
+        await self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cand_ne ON dependency_candidate(ne_version_id)"
+        )
+        await self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_edge_status ON graph_edge(status)"
+        )
+        await self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_edge_ne ON graph_edge(ne_version_id)"
+        )
+        await self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cl_dep ON graph_changelog(dependency_id)"
+        )
+
         # Ensure storage root exists
         MML_STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
 
