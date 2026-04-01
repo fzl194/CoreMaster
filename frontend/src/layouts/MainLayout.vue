@@ -10,13 +10,19 @@
       :native-scrollbar="false"
       @collapse="collapsed = true"
       @expand="collapsed = false"
-      style="background: #0f1117"
+      class="layout-sider"
     >
       <!-- Logo -->
       <div class="sidebar-logo" :class="{ collapsed }">
         <div class="logo-icon">
           <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-            <rect x="2" y="2" width="24" height="24" rx="6" fill="#2563EB"/>
+            <defs>
+              <linearGradient id="logoGrad" x1="2" y1="2" x2="26" y2="26" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#2563EB"/>
+                <stop offset="1" stop-color="#06B6D4"/>
+              </linearGradient>
+            </defs>
+            <rect x="2" y="2" width="24" height="24" rx="6" fill="url(#logoGrad)"/>
             <path d="M9 10L14 7L19 10V18L14 21L9 18V10Z" stroke="white" stroke-width="1.5" fill="none"/>
             <circle cx="14" cy="14" r="2.5" fill="white"/>
           </svg>
@@ -50,12 +56,12 @@
     </n-layout-sider>
 
     <!-- Main content -->
-    <n-layout style="background: #13151a">
+    <n-layout class="main-layout">
       <!-- Header -->
-      <n-layout-header bordered style="height: 56px; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; background: #16181f; border-color: #1e2028;">
+      <n-layout-header bordered class="layout-header">
         <div style="display: flex; align-items: center; gap: 12px;">
           <n-breadcrumb v-if="breadcrumbItems.length > 0">
-            <n-breadcrumb-item v-for="item in breadcrumbItems" :key="item.path">
+            <n-breadcrumb-item v-for="item in breadcrumbItems" :key="item.path" clickable @click="router.push(item.path)">
               {{ item.label }}
             </n-breadcrumb-item>
           </n-breadcrumb>
@@ -72,7 +78,7 @@
       <n-layout-content
         :native-scrollbar="false"
         content-style="padding: 28px;"
-        style="background: #13151a"
+        class="layout-content"
       >
         <router-view />
       </n-layout-content>
@@ -97,6 +103,7 @@ import {
   CreateOutline,
   CheckmarkCircleOutline,
   TerminalOutline,
+  ServerOutline,
 } from "@vicons/ionicons5";
 
 const router = useRouter();
@@ -118,6 +125,7 @@ const iconMap: Record<string, any> = {
   graph: ScanOutline,
   generate: CreateOutline,
   validator: CheckmarkCircleOutline,
+  database: ServerOutline,
 };
 
 const currentTitle = computed(() => {
@@ -145,17 +153,33 @@ const menuOptions = computed<MenuOption[]>(() => {
     },
   ];
 
-  const pluginItems: MenuOption[] = menus.value.map((m) => ({
-    label: m.title,
-    key: m.path,
-    icon: () => h(iconMap[m.icon] || TerminalOutline),
-  }));
+  // Canonical order: matches homepage metric cards order
+  const menuOrder = [
+    "mml-manager",
+    "version-diff",
+    "mml-graph",
+    "script-gen",
+    "validator",
+    "db-manager",
+  ];
+
+  const pluginItems: MenuOption[] = [...menus.value]
+    .sort((a, b) => {
+      const ai = menuOrder.findIndex((k) => a.path.includes(k));
+      const bi = menuOrder.findIndex((k) => b.path.includes(k));
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    })
+    .map((m) => ({
+      label: m.title,
+      key: m.path,
+      icon: () => h(iconMap[m.icon] || TerminalOutline),
+    }));
 
   if (pluginItems.length > 0) {
     return [
       ...coreItems,
       { type: "divider", key: "d1" },
-      { label: "功能模块", key: "plugin-group", icon: () => h(TerminalOutline), children: pluginItems },
+      ...pluginItems,
     ];
   }
   return coreItems;
@@ -182,13 +206,21 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+.layout-sider {
+  background: rgba(255, 255, 255, 0.85) !important;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-right: 1px solid rgba(37, 99, 235, 0.08) !important;
+}
+
 .sidebar-logo {
   height: 56px;
   display: flex;
   align-items: center;
   padding: 0 20px;
   gap: 12px;
-  border-bottom: 1px solid #1e2028;
+  border-bottom: 1px solid #E2E8F0;
   transition: padding 0.3s ease;
 }
 .sidebar-logo.collapsed {
@@ -201,10 +233,13 @@ onMounted(async () => {
   align-items: center;
 }
 .logo-text {
-  font-family: 'Fira Code', monospace;
+  font-family: 'Exo 2', 'Fira Code', monospace;
   font-size: 16px;
   font-weight: 700;
-  color: #e2e8f0;
+  background: linear-gradient(135deg, #2563EB, #06B6D4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
   letter-spacing: -0.5px;
   white-space: nowrap;
 }
@@ -218,7 +253,7 @@ onMounted(async () => {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 1px;
-  color: #475569;
+  color: #94A3B8;
 }
 
 .sidebar-bottom {
@@ -231,7 +266,7 @@ onMounted(async () => {
   align-items: center;
   padding: 0 20px;
   gap: 8px;
-  border-top: 1px solid #1e2028;
+  border-top: 1px solid #E2E8F0;
   transition: padding 0.3s ease;
 }
 .sidebar-bottom.collapsed {
@@ -242,20 +277,41 @@ onMounted(async () => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #22c55e;
+  background: #22C55E;
   box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
   flex-shrink: 0;
 }
 .status-text {
   font-size: 12px;
-  color: #64748b;
+  color: #64748B;
   white-space: nowrap;
+}
+
+/* ── Main area ───────────────────────────────────────────────────────────── */
+.main-layout {
+  background: #F0F4F8 !important;
+}
+
+.layout-header {
+  height: 56px;
+  padding: 0 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.75) !important;
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  border-bottom: 1px solid rgba(37, 99, 235, 0.06) !important;
+}
+
+.layout-content {
+  background: #F0F4F8 !important;
 }
 
 .header-title {
   font-size: 15px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: #0F172A;
 }
 
 /* Transitions */
