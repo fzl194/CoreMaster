@@ -53,6 +53,7 @@
 
       <!-- Data table -->
       <n-data-table
+        v-if="displayEntries.length > 0"
         :columns="entryColumns"
         :data="displayEntries"
         :bordered="false"
@@ -62,7 +63,7 @@
         class="light-table"
       />
 
-      <div v-if="entries.length === 0 && !entriesLoading" class="empty-hint">
+      <div v-if="displayEntries.length === 0 && !entriesLoading" class="empty-hint">
         <n-icon size="40" color="#94A3B8"><document-text-outline /></n-icon>
         <p>当前目录为空</p>
       </div>
