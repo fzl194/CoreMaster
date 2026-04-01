@@ -148,14 +148,14 @@
             :options="neVersionSelectOptions"
             placeholder="选择版本"
             size="tiny"
-            style="min-width: 180px"
+            class="upload-version-select"
           />
           <n-button
             text
             size="tiny"
             quaternary
             @click="removeUploadFile(idx)"
-            style="width: 60px; justify-content: center"
+            style="width: 60px; flex-shrink: 0; justify-content: center"
           >
             <template #icon><n-icon size="16" color="#EF4444"><trash-outline /></n-icon></template>
           </n-button>
@@ -718,12 +718,18 @@ onMounted(() => {
 
 .upload-file-name {
   flex: 1;
+  min-width: 0;
   font-size: 12px;
   font-family: 'Fira Code', monospace;
   color: #0F172A;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.upload-version-select {
+  flex-shrink: 0;
+  width: 180px;
 }
 
 /* ── Editor view ──────────────────────────────────────────────────────────── */
