@@ -1,6 +1,8 @@
 # backend/plugins/mml_manager/main.py
+import json
+import shutil
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, Query
+from fastapi import APIRouter, UploadFile, File, Query, Form
 from fastapi.responses import FileResponse, JSONResponse
 from core.plugin.context import PluginContext
 from core.services.parser import ParserService
@@ -32,17 +34,23 @@ class Plugin:
             )
         """)
         await self.db.execute("""
-            CREATE TABLE IF NOT EXISTS mml_file (
+            CREATE TABLE IF NOT EXISTS file_entry (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                filename TEXT NOT NULL,
-                ne_version_id INTEGER NOT NULL REFERENCES ne_version(id),
-                file_path TEXT NOT NULL,
-                file_size INTEGER NOT NULL,
+                parent_id INTEGER REFERENCES file_entry(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                ne_version_id INTEGER REFERENCES ne_version(id),
+                file_size INTEGER DEFAULT 0,
+                file_path TEXT,
                 description TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(parent_id, name, type)
             )
         """)
+
+        # Ensure storage root exists
+        MML_STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
 
         # ── Parse endpoints (existing) ──────────────────────────────────
 
@@ -90,9 +98,9 @@ class Plugin:
 
         @self.router.delete("/ne-versions/{ne_id}")
         async def delete_ne_version(ne_id: int):
-            # Check for associated files
+            # Check for associated files in file_entry table
             files = await self.db.query(
-                "SELECT id FROM mml_file WHERE ne_version_id=?", (ne_id,)
+                "SELECT id FROM file_entry WHERE ne_version_id=? AND type='file'", (ne_id,)
             )
             if files:
                 return JSONResponse(
@@ -102,97 +110,300 @@ class Plugin:
             await self.db.execute("DELETE FROM ne_version WHERE id=?", (ne_id,))
             return {"ok": True}
 
-        # ── File Management ─────────────────────────────────────────────
+        # ── File Entry Management ───────────────────────────────────────
+
+        @self.router.get("/entries")
+        async def list_entries(parent_id: int | None = Query(None)):
+            if parent_id is not None:
+                # Verify parent entry exists and is a folder
+                parent_rows = await self.db.query(
+                    "SELECT id, type FROM file_entry WHERE id=?", (parent_id,)
+                )
+                if not parent_rows:
+                    return JSONResponse(
+                        status_code=404,
+                        content={"detail": "指定目录不存在"},
+                    )
+                if parent_rows[0]["type"] != "folder":
+                    return JSONResponse(
+                        status_code=400,
+                        content={"detail": "指定条目不是文件夹"},
+                    )
+                rows = await self.db.query(
+                    "SELECT e.id, e.parent_id, e.name, e.type, e.ne_version_id, "
+                    "e.file_size, e.description, e.created_at, e.updated_at, "
+                    "n.vendor, n.ne_type, n.version "
+                    "FROM file_entry e LEFT JOIN ne_version n ON e.ne_version_id = n.id "
+                    "WHERE e.parent_id=? "
+                    "ORDER BY e.type DESC, e.name ASC",
+                    (parent_id,),
+                )
+            else:
+                rows = await self.db.query(
+                    "SELECT e.id, e.parent_id, e.name, e.type, e.ne_version_id, "
+                    "e.file_size, e.description, e.created_at, e.updated_at, "
+                    "n.vendor, n.ne_type, n.version "
+                    "FROM file_entry e LEFT JOIN ne_version n ON e.ne_version_id = n.id "
+                    "WHERE e.parent_id IS NULL "
+                    "ORDER BY e.type DESC, e.name ASC"
+                )
+            return rows
+
+        @self.router.get("/entries/{entry_id}/path")
+        async def get_entry_path(entry_id: int):
+            path_chain = []
+            current_id = entry_id
+
+            while current_id is not None:
+                rows = await self.db.query(
+                    "SELECT id, parent_id, name FROM file_entry WHERE id=?",
+                    (current_id,),
+                )
+                if not rows:
+                    return JSONResponse(
+                        status_code=404,
+                        content={"detail": "条目不存在"},
+                    )
+                entry = rows[0]
+                path_chain.append({"id": entry["id"], "name": entry["name"]})
+                current_id = entry["parent_id"]
+
+            # Reverse to get root-first order
+            path_chain.reverse()
+            return path_chain
+
+        @self.router.post("/entries")
+        async def create_entry(payload: dict):
+            parent_id = payload.get("parent_id")
+            name = payload.get("name", "").strip()
+
+            if not name:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "文件夹名称不能为空"},
+                )
+
+            if parent_id is not None:
+                # Verify parent exists and is a folder
+                parent_rows = await self.db.query(
+                    "SELECT id, type FROM file_entry WHERE id=?", (parent_id,)
+                )
+                if not parent_rows:
+                    return JSONResponse(
+                        status_code=404,
+                        content={"detail": "父目录不存在"},
+                    )
+                if parent_rows[0]["type"] != "folder":
+                    return JSONResponse(
+                        status_code=400,
+                        content={"detail": "父条目不是文件夹"},
+                    )
+
+            try:
+                await self.db.execute(
+                    "INSERT INTO file_entry (parent_id, name, type) VALUES (?, ?, 'folder')",
+                    (parent_id, name),
+                )
+            except Exception:
+                return JSONResponse(
+                    status_code=409,
+                    content={"detail": "同名文件夹已存在"},
+                )
+
+            rows = await self.db.query(
+                "SELECT id, parent_id, name, type, ne_version_id, file_size, "
+                "description, created_at, updated_at "
+                "FROM file_entry WHERE parent_id IS ? AND name=? AND type='folder' "
+                "ORDER BY id DESC LIMIT 1",
+                (parent_id, name),
+            )
+            entry = rows[0]
+
+            # Create physical directory using entry_id as name
+            folder_path = MML_STORAGE_ROOT / str(entry["id"])
+            folder_path.mkdir(parents=True, exist_ok=True)
+
+            return entry
+
+        @self.router.delete("/entries/{entry_id}")
+        async def delete_entry(entry_id: int):
+            rows = await self.db.query(
+                "SELECT id, parent_id, name, type FROM file_entry WHERE id=?",
+                (entry_id,),
+            )
+            if not rows:
+                return JSONResponse(
+                    status_code=404,
+                    content={"detail": "条目不存在"},
+                )
+            entry = rows[0]
+
+            if entry["type"] == "file":
+                # Delete single file: DB record + disk file
+                file_rows = await self.db.query(
+                    "SELECT file_path FROM file_entry WHERE id=?", (entry_id,)
+                )
+                if file_rows and file_rows[0]["file_path"]:
+                    p = Path(file_rows[0]["file_path"])
+                    if p.exists():
+                        p.unlink()
+                await self.db.execute("DELETE FROM file_entry WHERE id=?", (entry_id,))
+            else:
+                # Folder: recursively collect all descendant entry IDs
+                all_ids = []
+
+                async def collect_ids(eid: int):
+                    children = await self.db.query(
+                        "SELECT id, type FROM file_entry WHERE parent_id=?", (eid,)
+                    )
+                    for child in children:
+                        all_ids.append((child["id"], child["type"]))
+                        if child["type"] == "folder":
+                            await collect_ids(child["id"])
+
+                all_ids.append((entry_id, "folder"))
+                await collect_ids(entry_id)
+
+                # Delete disk files for all file-type entries
+                for eid, etype in all_ids:
+                    if etype == "file":
+                        file_rows = await self.db.query(
+                            "SELECT file_path FROM file_entry WHERE id=?", (eid,)
+                        )
+                        if file_rows and file_rows[0]["file_path"]:
+                            p = Path(file_rows[0]["file_path"])
+                            if p.exists():
+                                p.unlink()
+
+                # Delete disk directories for all folder-type entries (children first)
+                folder_ids = [eid for eid, etype in all_ids if etype == "folder"]
+                for fid in reversed(folder_ids):
+                    folder_path = MML_STORAGE_ROOT / str(fid)
+                    if folder_path.exists():
+                        shutil.rmtree(str(folder_path))
+
+                # Delete all database records
+                for eid, _ in all_ids:
+                    await self.db.execute("DELETE FROM file_entry WHERE id=?", (eid,))
+
+            return {"ok": True}
+
+        # ── File Upload ─────────────────────────────────────────────────
 
         @self.router.post("/upload")
         async def upload_files(
-            ne_version_id: int = Query(...),
+            metadata: str = Form(...),
             files: list[UploadFile] = File(...),
         ):
-            # Look up the NE version to get vendor/ne_type/version for path
-            ne_rows = await self.db.query(
-                "SELECT vendor, ne_type, version FROM ne_version WHERE id=?",
-                (ne_version_id,),
-            )
-            if not ne_rows:
+            try:
+                meta = json.loads(metadata)
+            except json.JSONDecodeError:
                 return JSONResponse(
-                    status_code=404,
-                    content={"detail": "网元版本不存在"},
+                    status_code=400,
+                    content={"detail": "metadata 不是有效的 JSON"},
                 )
-            ne = ne_rows[0]
-            dest_dir = (
-                MML_STORAGE_ROOT
-                / ne["vendor"]
-                / f"{ne['ne_type']}_{ne['version']}"
-            )
-            dest_dir.mkdir(parents=True, exist_ok=True)
+
+            parent_id = meta.get("parent_id")
+            items = meta.get("items", {})
+
+            # Validate parent_id if provided
+            if parent_id is not None:
+                parent_rows = await self.db.query(
+                    "SELECT id, type FROM file_entry WHERE id=?", (parent_id,)
+                )
+                if not parent_rows:
+                    return JSONResponse(
+                        status_code=404,
+                        content={"detail": "父目录不存在"},
+                    )
+                if parent_rows[0]["type"] != "folder":
+                    return JSONResponse(
+                        status_code=400,
+                        content={"detail": "父条目不是文件夹"},
+                    )
+
+            # Determine storage directory
+            if parent_id is not None:
+                storage_dir = MML_STORAGE_ROOT / str(parent_id)
+            else:
+                storage_dir = MML_STORAGE_ROOT
+            storage_dir.mkdir(parents=True, exist_ok=True)
 
             uploaded = []
             for f in files:
+                filename = f.filename
+                suffix = Path(filename).suffix.lower()
+
                 # Validate extension
-                suffix = Path(f.filename).suffix.lower()
                 if suffix not in (".mml", ".txt"):
                     continue
 
+                # Validate file has corresponding item in metadata
+                if filename not in items:
+                    continue
+
+                item_meta = items[filename]
+                ne_version_id = item_meta.get("ne_version_id")
+
+                # Validate ne_version_id exists
+                if ne_version_id is not None:
+                    ne_rows = await self.db.query(
+                        "SELECT id FROM ne_version WHERE id=?", (ne_version_id,)
+                    )
+                    if not ne_rows:
+                        continue
+
                 content_bytes = await f.read()
-                # Resolve collisions
-                target = dest_dir / f.filename
-                stem = target.stem
-                ext = target.suffix
-                counter = 0
-                while target.exists():
-                    counter += 1
-                    target = dest_dir / f"{stem}_{counter}{ext}"
 
-                target.write_bytes(content_bytes)
-
+                # Insert into database first to get entry_id
                 await self.db.execute(
-                    "INSERT INTO mml_file (filename, ne_version_id, file_path, file_size, description) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (f.filename, ne_version_id, str(target), len(content_bytes), None),
+                    "INSERT INTO file_entry (parent_id, name, type, ne_version_id, file_size) "
+                    "VALUES (?, ?, 'file', ?, ?)",
+                    (parent_id, filename, ne_version_id, len(content_bytes)),
                 )
+
                 rows = await self.db.query(
-                    "SELECT id, filename, ne_version_id, file_path, file_size, description, "
-                    "created_at, updated_at FROM mml_file WHERE file_path=?",
-                    (str(target),),
+                    "SELECT id FROM file_entry "
+                    "WHERE parent_id IS ? AND name=? AND type='file' "
+                    "ORDER BY id DESC LIMIT 1",
+                    (parent_id, filename),
                 )
-                if rows:
-                    uploaded.append(rows[0])
+                if not rows:
+                    continue
+                entry_id = rows[0]["id"]
+
+                # Store on disk using entry_id as filename
+                disk_filename = f"{entry_id}{suffix}"
+                disk_path = storage_dir / disk_filename
+                disk_path.write_bytes(content_bytes)
+
+                # Update file_path in database
+                await self.db.execute(
+                    "UPDATE file_entry SET file_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (str(disk_path), entry_id),
+                )
+
+                # Fetch the complete entry to return
+                result_rows = await self.db.query(
+                    "SELECT e.id, e.parent_id, e.name, e.type, e.ne_version_id, "
+                    "e.file_size, e.file_path, e.description, e.created_at, e.updated_at, "
+                    "n.vendor, n.ne_type, n.version "
+                    "FROM file_entry e LEFT JOIN ne_version n ON e.ne_version_id = n.id "
+                    "WHERE e.id=?",
+                    (entry_id,),
+                )
+                if result_rows:
+                    uploaded.append(result_rows[0])
+
             return uploaded
 
-        @self.router.get("/files")
-        async def list_files(ne_version_id: int | None = Query(None)):
-            sql = (
-                "SELECT f.id, f.filename, f.ne_version_id, f.file_path, f.file_size, "
-                "f.description, f.created_at, f.updated_at, "
-                "n.vendor, n.ne_type, n.version "
-                "FROM mml_file f JOIN ne_version n ON f.ne_version_id = n.id"
-            )
-            params: tuple = ()
-            if ne_version_id is not None:
-                sql += " WHERE f.ne_version_id=?"
-                params = (ne_version_id,)
-            sql += " ORDER BY f.id"
-            return await self.db.query(sql, params)
-
-        @self.router.get("/files/{file_id}")
-        async def get_file(file_id: int):
-            rows = await self.db.query(
-                "SELECT f.id, f.filename, f.ne_version_id, f.file_path, f.file_size, "
-                "f.description, f.created_at, f.updated_at, "
-                "n.vendor, n.ne_type, n.version "
-                "FROM mml_file f JOIN ne_version n ON f.ne_version_id = n.id "
-                "WHERE f.id=?",
-                (file_id,),
-            )
-            if not rows:
-                return JSONResponse(status_code=404, content={"detail": "文件不存在"})
-            return rows[0]
+        # ── File Content Operations ─────────────────────────────────────
 
         @self.router.get("/files/{file_id}/content")
         async def get_file_content(file_id: int):
             rows = await self.db.query(
-                "SELECT file_path FROM mml_file WHERE id=?", (file_id,)
+                "SELECT id, name, file_path FROM file_entry WHERE id=? AND type='file'",
+                (file_id,),
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"detail": "文件不存在"})
@@ -205,7 +416,8 @@ class Plugin:
         @self.router.put("/files/{file_id}/content")
         async def update_file_content(file_id: int, payload: dict):
             rows = await self.db.query(
-                "SELECT file_path FROM mml_file WHERE id=?", (file_id,)
+                "SELECT id, file_path FROM file_entry WHERE id=? AND type='file'",
+                (file_id,),
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"detail": "文件不存在"})
@@ -214,7 +426,7 @@ class Plugin:
             new_content = payload["content"]
             p.write_text(new_content, encoding="utf-8")
             await self.db.execute(
-                "UPDATE mml_file SET file_size=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                "UPDATE file_entry SET file_size=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (len(new_content.encode("utf-8")), file_id),
             )
             return {"ok": True}
@@ -222,33 +434,64 @@ class Plugin:
         @self.router.get("/files/{file_id}/download")
         async def download_file(file_id: int):
             rows = await self.db.query(
-                "SELECT file_path, filename FROM mml_file WHERE id=?", (file_id,)
+                "SELECT id, name, file_path FROM file_entry WHERE id=? AND type='file'",
+                (file_id,),
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"detail": "文件不存在"})
             p = Path(rows[0]["file_path"])
             if not p.exists():
                 return JSONResponse(status_code=404, content={"detail": "磁盘文件不存在"})
-            return FileResponse(str(p), filename=rows[0]["filename"])
+            return FileResponse(str(p), filename=rows[0]["name"])
 
-        @self.router.delete("/files/{file_id}")
-        async def delete_file(file_id: int):
+        @self.router.put("/files/{file_id}")
+        async def update_file_meta(file_id: int, payload: dict):
             rows = await self.db.query(
-                "SELECT file_path FROM mml_file WHERE id=?", (file_id,)
+                "SELECT id FROM file_entry WHERE id=? AND type='file'",
+                (file_id,),
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"detail": "文件不存在"})
-            p = Path(rows[0]["file_path"])
-            if p.exists():
-                p.unlink()
-            await self.db.execute("DELETE FROM mml_file WHERE id=?", (file_id,))
-            return {"ok": True}
+
+            updates = []
+            params: list = []
+
+            if "ne_version_id" in payload:
+                updates.append("ne_version_id=?")
+                params.append(payload["ne_version_id"])
+            if "name" in payload:
+                updates.append("name=?")
+                params.append(payload["name"])
+
+            if not updates:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "没有需要更新的字段"},
+                )
+
+            updates.append("updated_at=CURRENT_TIMESTAMP")
+            params.append(file_id)
+
+            await self.db.execute(
+                f"UPDATE file_entry SET {', '.join(updates)} WHERE id=?",
+                tuple(params),
+            )
+
+            result_rows = await self.db.query(
+                "SELECT e.id, e.parent_id, e.name, e.type, e.ne_version_id, "
+                "e.file_size, e.file_path, e.description, e.created_at, e.updated_at, "
+                "n.vendor, n.ne_type, n.version "
+                "FROM file_entry e LEFT JOIN ne_version n ON e.ne_version_id = n.id "
+                "WHERE e.id=?",
+                (file_id,),
+            )
+            return result_rows[0]
 
         # ── Stats ───────────────────────────────────────────────────────
 
         @self.router.get("/stats")
         async def get_stats():
-            fc = await self.db.query("SELECT COUNT(*) AS cnt FROM mml_file")
+            fc = await self.db.query("SELECT COUNT(*) AS cnt FROM file_entry WHERE type='file'")
             nc = await self.db.query("SELECT COUNT(*) AS cnt FROM ne_version")
             return {
                 "file_count": fc[0]["cnt"] if fc else 0,
