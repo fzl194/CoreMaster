@@ -345,6 +345,125 @@ Codex 的 review 文档中应明确说明：
 - 前端修改应保持 Vue 3 `script setup`、TypeScript 和现有 Naive UI 结构，除非任务本身要求架构调整。
 - 管理员通常不直接修改代码；如确需修改，应在相关任务文档中说明原因、范围、影响和后续责任归属。
 
+## 轻量协作管理机制
+
+随着任务和需求增多，若每一轮沟通都落成独立文档，后续会迅速失控。为兼顾“可追踪”和“可管理”，仓库内增加一套**双层协作机制**：
+
+### 一、正式文档层：只保留里程碑产物
+
+以下文档仍然保留，且只用于沉淀阶段性正式结论，不用于日常来回留言：
+
+- `docs/plans/*-impl-plan.md`
+- `docs/handoffs/*claude-handoff.md`
+- `docs/handoffs/*claude-fix.md`
+- `docs/analysis/*-codex-review.md`
+- `docs/admin/*-admin-note.md`
+
+使用原则：
+
+- 一个任务通常只保留一套主计划、主交接、主审查、主修复文档。
+- 小修订优先直接更新原文档，不为每次往返都新增一份新文档。
+- 只有当任务进入新的明确阶段（如修复轮次、正式复审）时，才新增新文档。
+
+### 二、协作对话层：统一进入根目录消息文件
+
+除正式文档外，Claude Code、Codex 与管理员之间的日常同步、提问、阻塞说明、补充上下文、短反馈，统一写入根目录消息文件，而不是继续新增零散 markdown 文档。
+
+#### 1. 任务索引：`COLLAB_TASKS.md`
+
+用途：
+
+- 作为当前协作任务的总入口
+- 记录每个任务的唯一 ID、当前状态、负责人、关联正式文档路径
+- 明确“这个任务现在看哪几个文件是准的”
+
+规则：
+
+- 每个非琐碎任务只创建一条任务记录
+- 后续所有 plan / handoff / review / fix / admin-note 都挂到这条记录下
+- 状态变化优先更新这里，而不是在多个文档头部重复写不同版本的状态
+
+推荐字段：
+
+```md
+## <task-id>
+- 标题：
+- 状态：
+- 当前阶段：
+- Claude：
+- Codex：
+- 管理员：
+- 计划文档：
+- 交接文档：
+- 审查文档：
+- 修复文档：
+- 管理员文档：
+- 最新消息序号：
+- 备注：
+```
+
+#### 2. 代理留言板：`AGENT_MESSAGES.md`
+
+用途：
+
+- 作为 Claude、Codex、管理员之间的“仓库内对话记录”
+- 记录短消息，而不是正式结论
+- 用于替代“为了说一句话就新建一个 md”
+
+适合写入的内容：
+
+- Claude 给 Codex 的审查提示
+- Codex 给 Claude 的补充问题或修复建议
+- 管理员插入的范围调整、优先级变化、额外说明
+- 阻塞、疑点、假设变化、待确认项
+
+不适合写入的内容：
+
+- 完整正式审查结论
+- 完整实现计划
+- 最终交付说明
+
+消息格式：
+
+```md
+## MSG-0001
+- 任务：<task-id>
+- 时间：YYYY-MM-DD HH:MM
+- From：Claude | Codex | 管理员
+- To：Claude | Codex | 管理员 | All
+- 类型：handoff-note | review-note | blocker | question | decision | status
+- 关联文件：
+- 内容：
+- 预期动作：
+```
+
+管理规则：
+
+- `AGENT_MESSAGES.md` 采用**追加写入**，不回改历史消息正文；如需修正，新增一条 follow-up。
+- 每条消息必须关联 `task-id`。
+- 长消息应先总结为 3-10 行短说明，再附相关正式文档路径。
+- 若某条消息已经形成正式结论，应在后续消息中标记“已沉淀到哪个正式文档”，避免留言板变成第二套文档系统。
+
+### 三、推荐协作节奏
+
+对于一个正常任务，推荐按以下方式协作：
+
+1. 在 `COLLAB_TASKS.md` 新增任务记录，定义唯一 `task-id`
+2. Claude 产出正式 `plan`
+3. Claude 实现代码后产出正式 `handoff`
+4. Claude 若有额外提醒或对抗点，写入 `AGENT_MESSAGES.md`
+5. Codex 读取 `handoff` + `AGENT_MESSAGES.md` 后产出正式 `review`
+6. 若发现问题，Codex 可先在 `AGENT_MESSAGES.md` 留短消息，再由 Claude 产出正式 `fix`
+7. 过程中任务状态和“当前应看的文档”统一更新到 `COLLAB_TASKS.md`
+
+### 四、控制文档膨胀的硬规则
+
+- 短沟通写 `AGENT_MESSAGES.md`，不要新建文档。
+- 任务导航写 `COLLAB_TASKS.md`，不要靠人脑记忆当前有效文件。
+- 正式结论只写入 plan / handoff / review / fix / admin-note。
+- 同一任务若没有进入新阶段，不新增新文档，只更新原文档和索引。
+- 若消息文件过长，可按日期或季度归档为 `AGENT_MESSAGES.archive-YYYYQn.md`，但 `COLLAB_TASKS.md` 中必须保留最新活跃任务入口。
+
 ## 优先级顺序
 
 当不同指令冲突时，按以下顺序处理：
