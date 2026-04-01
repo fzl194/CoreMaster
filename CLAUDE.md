@@ -2,25 +2,99 @@
 
 > 本文件是 Claude Code 的个人行为准则。其他 Agent 读取时请无视。
 
-## 协作协议
+## 1. 先看哪里
 
-遵守 [TEAM.md](./TEAM.md) 中的共享团队协议。
+Claude 在进入任务时，按以下顺序获取上下文：
 
-项目架构和开发命令参见 [README.md](./README.md)。
+1. 用户当前指令
+2. `TEAM.md`
+3. `COLLAB_TASKS.md` 中对应 `task-id` 的任务记录
+4. 该任务关联的正式文档
+5. `docs/messages/<task-id>.md` 中的最近协作消息
+6. `README.md` 中的项目说明与开发命令
 
-在完成实现后，必须提供一份可供 Codex 审查的交接说明；在 Codex 的问题被修复或被明确处置之前，不应将任务视为完成。
+## 2. Claude 的核心职责
 
-## 输出位置与命名约定
+- 理解需求并澄清实现边界
+- 产出实现计划
+- 修改代码和相关实现文档
+- 执行验证
+- 向 Codex 交接
+- 在审查问题解决后向用户交付
 
-Claude 负责把计划、实现说明和交接材料写入 `docs/handoffs/`。
+## 3. Claude 负责写哪些文件
 
-路径约定：
+- `docs/plans/*`
+- `docs/handoffs/*claude-handoff.md`
+- `docs/handoffs/*claude-fix.md`
+- `backend/`、`frontend/` 中的实现代码
 
-- 计划文档：`docs/plans/YYYY-MM-DD-<task-slug>-impl-plan.md`
-- 交接文档：`docs/handoffs/YYYY-MM-DD-<task-slug>-claude-handoff.md`
-- 修复文档：`docs/handoffs/YYYY-MM-DD-<task-slug>-claude-fix.md`
+Claude 不负责创建或修改：
 
-`claude-handoff` 文档至少包含：
+- `docs/analysis/*`
+- `AGENTS.md`
+- 管理员专属文档
+
+## 4. Claude 如何使用共享文件
+
+### 4.1 `COLLAB_TASKS.md`
+
+Claude 只更新这些字段：
+
+- `计划文档`
+- `交接文档`
+- `修复文档`
+- 自己的责任字段
+- `最新消息`（仅在自己刚发消息后更新）
+
+Claude 不应主动覆盖：
+
+- `状态`
+- `当前阶段`
+- `审查文档`
+- 管理员备注
+
+### 4.2 `AGENT_MESSAGES.md`
+
+Claude 不在这里写长消息。这里只追加摘要索引。
+
+### 4.3 `docs/messages/<task-id>.md`
+
+Claude 的短沟通、补充说明、交接提醒、阻塞、问题，都写到任务消息文件里。
+
+推荐格式：
+
+```md
+## MSG-20260402-153012-claude
+- 时间：2026-04-02 15:30
+- From：Claude
+- To：Codex
+- 类型：handoff-note
+- 关联文件：
+- 内容：
+- 预期动作：
+```
+
+规则：
+
+- 只追加，不改历史消息正文
+- 若内容已沉淀为正式文档，追加一条 follow-up 说明去向
+
+## 5. 正式交付要求
+
+### 5.1 plan
+
+路径：
+
+- `docs/plans/YYYY-MM-DD-<task-slug>-impl-plan.md`
+
+### 5.2 handoff
+
+路径：
+
+- `docs/handoffs/YYYY-MM-DD-<task-slug>-claude-handoff.md`
+
+至少包含：
 
 - 任务目标
 - 本次实现范围
@@ -31,38 +105,29 @@ Claude 负责把计划、实现说明和交接材料写入 `docs/handoffs/`。
 - 未验证项
 - 已知风险
 - 指定给 Codex 的审查重点
-- 管理员本轮直接介入记录（如有）
+- 管理员本轮直接介入记录
 
-## Git 职责
+### 5.3 fix
 
-Claude 在开始实现前应至少检查：
+路径：
 
-- `git status --short`
-- 必要时查看本任务相关文件的 `git diff`
+- `docs/handoffs/YYYY-MM-DD-<task-slug>-claude-fix.md`
 
-Claude 在交接给 Codex 时，应在 handoff 文档中补充：
+Claude 在修复审查问题后，必须单独写 fix，不得回写 review 结论。
 
-- 当前分支名
-- 审查基线
-- 建议 Codex 优先查看的 diff 范围
-- 本次实现对应的关键提交，若尚未提交则明确写明"基于工作区改动审查"
-- 管理员在当前分支上的相关提交或工作区改动（如有）
+## 6. Git 工作方式
 
-推荐补充字段：
+- 开始实现前至少执行 `git status --short`
+- 必要时查看相关文件 diff
+- 暂存时必须逐文件 `git add <path>`
+- 不使用 `git add .` 或 `git add -A`
+- 不覆盖 Codex 或管理员未明确要求处理的改动
 
-```md
-- 分支：
-- 审查基线：
-- 关键提交：
-- 建议查看的 diff：
-- 管理员相关改动：
-```
+## 7. 协作原则
 
-## 文件边界
+- 不把短沟通塞进正式文档
+- 不在共享文件中重写整块内容，尽量做局部更新
+- 不擅自修改 Codex 的 review 文档
+- 不在问题未处置前宣称任务完成
+- 若共享文件刚被别人更新，先重新读取再写入
 
-Claude 必须遵守 [TEAM.md](./TEAM.md) 中的文件归属表。具体来说：
-
-- `docs/analysis/` 下的所有文件由 Codex 独占，Claude 不得创建、修改、暂存或提交。
-- `docs/handoffs/*claude-handoff.md` 中状态标记和回写区域由 Codex 维护，Claude 只负责编写初始交接内容（首次创建时标记为 `待 Codex 审查`）。
-- 当 Claude 根据 Codex 审查意见完成代码修复后，应产出独立的修复交付文档（如 `docs/handoffs/YYYY-MM-DD-<task-slug>-claude-fix.md`），由 Codex 去回写 handoff 状态和 review 结论。
-- `git add` 时必须逐文件指定路径，**禁止**使用 `git add -A` 或 `git add .`，避免误提交对方的文件。
