@@ -22,6 +22,11 @@ class ParserService:
         re.IGNORECASE,
     )
 
+    _COMMAND_START_RE = re.compile(
+        r"^\s*(ADD|MOD|DEL|RMV|SET|GET|LST|DSP|ACT|DEA|BLK|UBL|REG|DEREG)\s+\w+\s*:",
+        re.IGNORECASE,
+    )
+
     # ── Public API ──────────────────────────────────────────────────────────
 
     def parse_text(self, text: str) -> list[dict]:
@@ -36,7 +41,9 @@ class ParserService:
 
     def parse_text_with_report(self, text: str) -> dict:
         """解析 MML 文本，返回命令列表和解析报告。"""
-        lines = self._preprocess(text)
+        # Strip block comments first
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+
         commands = []
         report = {
             "total_lines": 0,
@@ -50,34 +57,55 @@ class ParserService:
         buf = ""
         buf_start_line = 0
 
+        def flush_unrecognized():
+            """Flush current buffer as unrecognized."""
+            nonlocal buf
+            if buf.strip():
+                report["unrecognized"] += 1
+                if len(report["sample_unrecognized"]) < 5:
+                    report["sample_unrecognized"].append({
+                        "line_number": buf_start_line,
+                        "text": buf.strip()[:100],
+                    })
+                report["total_lines"] += 1
+            buf = ""
+
         for raw_line in text.splitlines():
             line_no += 1
             stripped = raw_line.strip()
 
             # Skip empty lines and line comments
             if not stripped or stripped.startswith("//"):
+                # If we were accumulating a multi-line command, flush it
+                if buf:
+                    flush_unrecognized()
                 report["total_lines"] += 1
                 report["skipped"] += 1
+                continue
+
+            # Handle backslash continuation
+            if stripped.endswith("\\"):
+                if not buf:
+                    buf_start_line = line_no
+                buf += stripped[:-1] + " "
                 continue
 
             # Accumulate into buffer
             if not buf:
                 buf_start_line = line_no
-
-            # Handle backslash continuation
-            if stripped.endswith("\\"):
-                buf += stripped[:-1] + " "
-                continue
-
             buf += stripped
+
+            # Check if this looks like a command start
+            if not buf.rstrip().endswith(";"):
+                # If buffer doesn't start with a command keyword, it's unrecognized
+                if not self._COMMAND_START_RE.match(buf):
+                    flush_unrecognized()
+                # Otherwise continue accumulating (multi-line command)
+                continue
 
             report["total_lines"] += 1
 
-            # Check if command is complete (ends with ;)
-            if not buf.rstrip().endswith(";"):
-                continue
-
-            # Try to parse the accumulated buffer
+            # Buffer ends with ; — try to parse
             match = self._COMMAND_RE.match(buf.strip())
             if match:
                 operation, name, params_str = match.groups()
@@ -97,10 +125,9 @@ class ParserService:
                         "line_number": buf_start_line,
                         "text": buf.strip()[:100],
                     })
-
             buf = ""
 
-        # Handle remaining buffer (command without trailing ;)
+        # Handle remaining buffer (incomplete command without ;)
         if buf.strip():
             report["total_lines"] += 1
             report["unrecognized"] += 1
@@ -113,10 +140,6 @@ class ParserService:
         return {"commands": commands, "report": report}
 
     # ── Internal ────────────────────────────────────────────────────────────
-
-    def _preprocess(self, text: str) -> str:
-        """Strip block comments /* ... */ from text."""
-        return re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
 
     def _parse_params(self, params_str: str) -> list[dict]:
         """引号感知的参数切分。
@@ -154,7 +177,6 @@ class ParserService:
         while i < len(s):
             ch = s[i]
             if ch == '\\' and i + 1 < len(s) and s[i + 1] in ('"', '\\'):
-                # Escaped character — keep both chars
                 current.append(ch)
                 current.append(s[i + 1])
                 i += 2
@@ -182,12 +204,11 @@ class ParserService:
                (value[0] == "'" and value[-1] == "'"):
                 inner = value[1:-1]
                 return self._process_escapes(inner)
-        # Strip outer double quotes (backward compat with original behavior)
         stripped = value.strip('"')
         return self._process_escapes(stripped)
 
     def _process_escapes(self, s: str) -> str:
-        """Process escape sequences: \\\" -> \", \\\\ -> \\."""
+        """Process escape sequences: \\" -> ", \\\\ -> \\."""
         result = []
         i = 0
         while i < len(s):
