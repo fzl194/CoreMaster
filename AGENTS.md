@@ -28,11 +28,12 @@
 
 1. Claude 创建或更新任务计划。
 2. Claude 实现代码改动。
-3. Claude 为 Codex 编写交接说明。
+3. Claude 为 Codex 编写交接说明（handoff）。
 4. Codex 审查实现，检查遗漏、回归风险与设计风险。
-5. Codex 输出包含结论和建议的分析文档。
-6. Claude 根据分析文档修复问题，或明确记录不修复的处置结论。
-7. Claude 对用户做最终交付。
+5. Codex 输出包含结论和建议的分析文档（review）。
+6. 如果 review 发现需修复的问题，Claude 实现修复并产出独立的修复交付文档（fix），**不得**修改 handoff 或 review 文档。
+7. Codex 审查修复，确认闭环后回写 handoff 状态和最终评估。
+8. Claude 对用户做最终交付。
 
 如果任务非常小，不值得单独产出分析文档，执行中的代理可以在对话里直接完成交接和审查。对于功能开发、重构、架构调整、插件变更、API 变更、数据结构或表结构变更，默认应产出分析文档。
 
@@ -64,6 +65,19 @@ Claude 交给 Codex 的材料应尽量简洁，但至少包含：
 ## 交接文件落盘位置
 
 为了保证双方每次执行时都能互通有无，非琐碎任务必须将交接材料和审查材料落盘，而不是只留在对话里。
+
+### 文件归属
+
+双方必须严格遵守文件归属边界，不得暂存、提交或修改属于对方的文件。
+
+| 目录/文件模式 | 归属方 | 说明 |
+|---------------|--------|------|
+| `docs/analysis/*-codex-review.md` | Codex | Codex 独占，Claude 不得创建、修改或提交 |
+| `docs/handoffs/*claude-handoff.md` 初始内容 | Claude | Claude 编写初始交接内容 |
+| `docs/handoffs/*claude-handoff.md` 状态/回写区域 | Codex | Codex 回写审查结论和状态标记 |
+| `docs/handoffs/*claude-fix.md` | Claude | Claude 修复代码后的独立交付文档 |
+| `docs/plans/*-impl-plan.md` | Claude | Claude 的实现计划 |
+| 源代码（`backend/`、`frontend/`） | Claude | Claude 负责实现和修改 |
 
 ### Claude Code 输出位置
 
@@ -108,8 +122,9 @@ Codex 负责把审查结论和查漏补缺分析写入 `docs/analysis/`。
 ### 状态回写规则
 
 - Claude 产出 handoff 后，应在 handoff 文档中标记状态为 `待 Codex 审查`。
-- Codex 完成审查后，应在 review 文档中标记状态为 `已审查`，并在 handoff 文档末尾追加 review 文档路径。
-- Claude 完成问题处置后，应把 handoff 文档状态更新为 `已处置` 或 `部分处置`，并简要记录处置结论。
+- Codex 完成审查后，应在 review 文档中标记状态为 `已审查`，并在 handoff 文档末尾追加 review 文档路径和审查结论。
+- Claude 根据 review 完成代码修复后，应产出独立的修复交付文档（如 `*claude-fix.md`），**不得**自行回写 handoff 状态或 review 结论。
+- Codex 确认修复闭环后，由 Codex 负责更新 handoff 文档状态为 `已处置` 或 `部分处置`，并回写最终评估。
 
 Codex 返回的材料应包含：
 
@@ -249,7 +264,7 @@ Codex 的 review 文档中应明确说明：
 双方协作时优先使用以下非交互式命令：
 
 - `git status --short`
-- `git add -A`
+- `git add <具体文件路径>`（**禁止**使用 `git add -A` 或 `git add .`，必须逐文件暂存，避免误提交对方的文件）
 - `git commit -m "<message>"`
 - `git push`
 - `git diff -- <path>`
