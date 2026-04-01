@@ -31,15 +31,23 @@ backend/
 │       ├── context.py       # PluginContext - 插件运行上下文
 │       └── loader.py        # PluginLoader - 插件扫描与加载
 ├── plugins/
-│   └── mml_manager/         # MML 管理插件（示例/首个插件）
+│   ├── mml_manager/         # MML 文件管理插件
+│   │   ├── plugin.toml      # 插件清单
+│   │   └── main.py          # 插件入口
+│   └── db_manager/          # 数据库管理插件
 │       ├── plugin.toml      # 插件清单
 │       └── main.py          # 插件入口
+├── data/                    # 运行时数据（gitignored）
+│   ├── coremaster.db        # SQLite 数据库
+│   └── mml_files/           # MML 文件磁盘存储
 └── tests/
     ├── test_registry.py     # ServiceRegistry 单元测试
     ├── test_parser.py       # ParserService 单元测试
     ├── test_database.py     # DatabaseService 单元测试
     ├── test_plugin.py       # 插件系统单元测试
-    └── test_integration.py  # API 集成测试
+    ├── test_integration.py  # 核心端点集成测试
+    ├── test_mml_manager.py  # MML 管理插件集成测试
+    └── test_db_manager.py   # 数据库管理插件集成测试
 ```
 
 ## 插件系统
@@ -98,8 +106,6 @@ svc = ctx.get_service(MyService)
 - `DatabaseService` -- SQLite 异步数据库（aiosqlite）
 - `ParserService` -- MML 命令解析器
 
-`protocols.py` 中定义了 `DatabaseServiceProtocol` 和 `ParserServiceProtocol` 接口。当前这两个接口仅作为参考定义，实际服务类并未继承 Protocol，后续会逐步完善实现。
-
 ## API 端点
 
 ### 核心端点
@@ -109,42 +115,38 @@ svc = ctx.get_service(MyService)
 | GET | `/api/health` | 健康检查 |
 | GET | `/api/plugins` | 获取已加载插件列表和菜单 |
 
-### MML 管理插件端点
+### MML 管理插件（`/api/plugins/mml_manager`）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/plugins/mml_manager/parse` | 上传文件解析 MML 命令（multipart） |
-| POST | `/api/plugins/mml_manager/parse-text` | 发送文本解析 MML 命令（JSON） |
+| POST | `/parse` | 上传文件解析 MML 命令（multipart） |
+| POST | `/parse-text` | 发送文本解析 MML 命令（JSON） |
+| GET | `/ne-versions` | 列出所有网元版本 |
+| POST | `/ne-versions` | 创建网元版本 |
+| DELETE | `/ne-versions/{id}` | 删除网元版本（有关联文件时拒绝） |
+| GET | `/entries?parent_id=` | 列出目录内容（文件夹在前） |
+| GET | `/entries/{id}/path` | 获取面包屑路径链 |
+| POST | `/entries` | 创建文件夹 |
+| DELETE | `/entries/{id}` | 删除文件/文件夹（文件夹递归删除） |
+| POST | `/upload` | 上传文件（FormData：metadata JSON + files） |
+| GET | `/files/{id}/content` | 获取文件文本内容 |
+| PUT | `/files/{id}/content` | 更新文件文本内容 |
+| GET | `/files/{id}/download` | 下载文件 |
+| PUT | `/files/{id}` | 更新文件元数据（名称、网元版本） |
+| GET | `/stats` | 获取文件和网元版本计数 |
 
-请求示例：
+### 数据库管理插件（`/api/plugins/db_manager`）
 
-```bash
-# 解析文本
-curl -X POST http://localhost:8000/api/plugins/mml_manager/parse-text \
-  -H "Content-Type: application/json" \
-  -d '{"text": "ADD APN: APN=\"test\", BINDVPN=ENABLE;"}'
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/tables` | 列出所有非系统表及行数 |
+| GET | `/tables/{name}/schema` | 获取列信息（PRAGMA table_info） |
+| GET | `/tables/{name}/rows` | 分页浏览行（limit/offset） |
+| POST | `/tables/{name}/rows` | 插入行 |
+| PUT | `/tables/{name}/rows/{row_id}` | 按 rowid 更新行 |
+| DELETE | `/tables/{name}/rows/{row_id}` | 按 rowid 删除行 |
 
-# 上传文件
-curl -X POST http://localhost:8000/api/plugins/mml_manager/parse \
-  -F "file=@commands.mml"
-```
-
-响应格式：
-
-```json
-{
-  "commands": [
-    {
-      "operation": "ADD",
-      "name": "APN",
-      "params": [{"name": "APN", "value": "test"}, {"name": "BINDVPN", "value": "ENABLE"}],
-      "raw_text": "ADD APN: APN=\"test\", BINDVPN=ENABLE;",
-      "line_number": 1
-    }
-  ],
-  "count": 1
-}
-```
+表名通过正则 `^[a-zA-Z_][a-zA-Z0-9_]*$` 校验防止注入，`file_path` 列为受保护列，不可编辑。
 
 ## 创建新插件
 
@@ -219,22 +221,15 @@ pytest -v
 - pytest + pytest-asyncio：测试框架
 - httpx：集成测试中的异步 HTTP 客户端
 
-## 当前状态说明
+## 依赖
 
-本项目处于早期开发阶段（v0.1.0），已实现的部分：
-
-- 插件扫描、加载、路由挂载机制
-- ServiceRegistry 全局服务容器
-- DatabaseService（SQLite 异步封装）
-- ParserService（MML 命令解析，支持 ADD/MOD/DEL/GET/LST 等操作类型）
-- MML 管理示例插件
-- 核心和插件的单元测试及集成测试
-
-尚未实现 / 规划中的部分：
-
-- `protocols.py` 中定义的 Protocol 接口目前仅作参考，未强制约束
-- 插件前端部分（Vue 组件）的加载机制
-- 用户认证与权限系统
-- 数据库迁移机制
-- 插件间依赖管理
-- 生产环境部署配置
+| 包 | 用途 |
+|----|------|
+| fastapi >= 0.115.0 | Web 框架 |
+| uvicorn[standard] >= 0.30.0 | ASGI 服务器 |
+| aiosqlite >= 0.20.0 | SQLite 异步访问 |
+| toml >= 0.10.2 | 解析 plugin.toml |
+| pydantic >= 2.0.0 | 数据校验 |
+| httpx >= 0.27.0 | 测试用 HTTP 客户端 |
+| pytest >= 8.0.0 | 测试框架 |
+| pytest-asyncio >= 0.24.0 | 异步测试支持 |
