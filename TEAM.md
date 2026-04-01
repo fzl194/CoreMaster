@@ -141,7 +141,7 @@
 - 每条消息必须带时间、From、To、类型
 - 长沟通优先写这里，不写到 `AGENT_MESSAGES.md`
 
-## 6.4 handoff 状态流转
+### 6.4 handoff 状态流转
 
 为了保证 Claude 与 Codex 的协作闭环可追踪，`docs/handoffs/*claude-handoff.md` 需要保留明确状态流转：
 
