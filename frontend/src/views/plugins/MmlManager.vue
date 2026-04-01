@@ -142,7 +142,7 @@
           <span style="width: 60px; text-align: center">操作</span>
         </div>
         <div v-for="(item, idx) in uploadFileList" :key="idx" class="upload-file-row">
-          <span class="upload-file-name">{{ item.file.name }}</span>
+          <span class="upload-file-name">{{ item.name }}</span>
           <n-select
             v-model:value="item.neVersionId"
             :options="neVersionSelectOptions"
@@ -234,7 +234,7 @@ const newFolderName = ref("");
 // Upload modal
 const showUploadModal = ref(false);
 const globalVersionId = ref<number | null>(null);
-const uploadFileList = ref<{ file: File; neVersionId: number | null }[]>([]);
+const uploadFileList = ref<{ file: File | null; name: string; neVersionId: number | null }[]>([]);
 const uploading = ref(false);
 const uploadRef = ref<any>(null);
 
@@ -293,7 +293,7 @@ const displayEntries = computed(() => {
 const canSubmitUpload = computed(() => {
   return (
     uploadFileList.value.length > 0 &&
-    uploadFileList.value.every((item) => item.neVersionId !== null)
+    uploadFileList.value.every((item) => item.file != null && item.neVersionId !== null)
   );
 });
 
@@ -561,19 +561,16 @@ async function doCreateFolder() {
 // ── Upload ──────────────────────────────────────────────────────────────────
 
 function handleUploadChange({ fileList }: { fileList: UploadFileInfo[] }) {
-  const files = fileList
-    .map((f) => f.file)
-    .filter((f): f is File => f != null);
-
   // Preserve existing neVersionId assignments for files that remain
   const existingMap = new Map<string, number | null>();
   for (const item of uploadFileList.value) {
-    existingMap.set(item.file.name, item.neVersionId);
+    existingMap.set(item.name, item.neVersionId);
   }
 
-  uploadFileList.value = files.map((file) => ({
-    file,
-    neVersionId: existingMap.get(file.name) ?? globalVersionId.value ?? null,
+  uploadFileList.value = fileList.map((f) => ({
+    file: f.file,
+    name: f.name,
+    neVersionId: existingMap.get(f.name) ?? globalVersionId.value ?? null,
   }));
 }
 
@@ -593,10 +590,12 @@ async function doUpload() {
   if (!canSubmitUpload.value) return;
   uploading.value = true;
   try {
-    const files = uploadFileList.value.map((item) => ({
-      file: item.file,
-      neVersionId: item.neVersionId!,
-    }));
+    const files = uploadFileList.value
+      .filter((item) => item.file != null)
+      .map((item) => ({
+        file: item.file!,
+        neVersionId: item.neVersionId!,
+      }));
     await uploadFiles(currentParentId.value, files);
     message.success(`成功上传 ${files.length} 个文件`);
     showUploadModal.value = false;
