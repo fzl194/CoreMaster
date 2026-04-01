@@ -29,7 +29,6 @@ async def lifespan(app: FastAPI):
     loader = PluginLoader(plugins_dir=PLUGINS_DIR)
     manifests = loader.scan()
 
-    all_menus = []
     for manifest in manifests:
         plugin_name = manifest["plugin"]["name"]
         ctx = PluginContext(registry, name=plugin_name)
@@ -53,12 +52,8 @@ async def lifespan(app: FastAPI):
                 if hasattr(plugin_instance, "router"):
                     app.include_router(plugin_instance.router, prefix=prefix)
 
-        # 收集菜单
-        all_menus.extend(ctx.get_menus())
-
     # 存到 app.state 供 API 使用
     app.state.registry = registry
-    app.state.menus = all_menus
     app.state.plugin_manifests = manifests
 
     yield
@@ -79,16 +74,19 @@ app.add_middleware(
 
 @app.get("/api/plugins")
 async def list_plugins():
-    return {
-        "menus": app.state.menus,
-        "plugins": [
-            {
-                "name": m["plugin"]["name"],
-                "description": m["plugin"].get("description", ""),
-            }
-            for m in app.state.plugin_manifests
-        ],
-    }
+    plugins = []
+    for m in app.state.plugin_manifests:
+        frontend = m["plugin"].get("frontend", {})
+        # 从插件名推导前端路径：foo_bar → /plugins/foo-bar
+        path = "/plugins/" + m["plugin"]["name"].replace("_", "-")
+        plugins.append({
+            "name": m["plugin"]["name"],
+            "description": m["plugin"].get("description", ""),
+            "menu_title": frontend.get("menu_title", m["plugin"]["name"]),
+            "icon": frontend.get("icon", ""),
+            "path": path,
+        })
+    return {"plugins": plugins}
 
 
 @app.get("/api/health")

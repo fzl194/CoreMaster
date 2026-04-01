@@ -7,16 +7,12 @@ const api = axios.create({
 export interface PluginInfo {
   name: string;
   description: string;
-}
-
-export interface MenuItem {
-  title: string;
+  menu_title: string;
   icon: string;
   path: string;
 }
 
 export interface PluginsResponse {
-  menus: MenuItem[];
   plugins: PluginInfo[];
 }
 

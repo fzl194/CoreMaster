@@ -94,14 +94,10 @@ import {
   NMenu, NTag, NBreadcrumb, NBreadcrumbItem,
 } from "naive-ui";
 import type { MenuOption } from "naive-ui";
-import { fetchPlugins, type MenuItem } from "../api";
+import { fetchPlugins, type PluginInfo } from "../api";
 import {
   HomeOutline,
   DocumentTextOutline,
-  GitCompareOutline,
-  ScanOutline,
-  CreateOutline,
-  CheckmarkCircleOutline,
   TerminalOutline,
   ServerOutline,
 } from "@vicons/ionicons5";
@@ -109,7 +105,7 @@ import {
 const router = useRouter();
 const route = useRoute();
 const collapsed = ref(false);
-const menus = ref<MenuItem[]>([]);
+const plugins = ref<PluginInfo[]>([]);
 const pluginCount = ref(0);
 const statusText = ref("服务运行中");
 
@@ -121,25 +117,21 @@ const activeKey = computed(() => {
 const iconMap: Record<string, any> = {
   home: HomeOutline,
   document: DocumentTextOutline,
-  diff: GitCompareOutline,
-  graph: ScanOutline,
-  generate: CreateOutline,
-  validator: CheckmarkCircleOutline,
   database: ServerOutline,
 };
 
 const currentTitle = computed(() => {
   const titleMap: Record<string, string> = { "/": "首页" };
-  menus.value.forEach((m) => { titleMap[m.path] = m.title; });
+  plugins.value.forEach((p) => { titleMap[p.path] = p.menu_title; });
   return titleMap[route.path] || "CoreMaster";
 });
 
 const breadcrumbItems = computed(() => {
   if (route.path === "/") return [];
   const items = [{ label: "首页", path: "/" }];
-  const matched = menus.value.find((m) => m.path === route.path);
+  const matched = plugins.value.find((p) => p.path === route.path);
   if (matched) {
-    items.push({ label: matched.title, path: matched.path });
+    items.push({ label: matched.menu_title, path: matched.path });
   }
   return items;
 });
@@ -153,27 +145,11 @@ const menuOptions = computed<MenuOption[]>(() => {
     },
   ];
 
-  // Canonical order: matches homepage metric cards order
-  const menuOrder = [
-    "mml-manager",
-    "version-diff",
-    "mml-graph",
-    "script-gen",
-    "validator",
-    "db-manager",
-  ];
-
-  const pluginItems: MenuOption[] = [...menus.value]
-    .sort((a, b) => {
-      const ai = menuOrder.findIndex((k) => a.path.includes(k));
-      const bi = menuOrder.findIndex((k) => b.path.includes(k));
-      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-    })
-    .map((m) => ({
-      label: m.title,
-      key: m.path,
-      icon: () => h(iconMap[m.icon] || TerminalOutline),
-    }));
+  const pluginItems: MenuOption[] = plugins.value.map((p) => ({
+    label: p.menu_title,
+    key: p.path,
+    icon: () => h(iconMap[p.icon] || TerminalOutline),
+  }));
 
   if (pluginItems.length > 0) {
     return [
@@ -196,7 +172,7 @@ function handleMenuClick(key: string) {
 onMounted(async () => {
   try {
     const res = await fetchPlugins();
-    menus.value = res.menus;
+    plugins.value = res.plugins;
     pluginCount.value = res.plugins.length;
   } catch (e) {
     statusText.value = "服务未连接";

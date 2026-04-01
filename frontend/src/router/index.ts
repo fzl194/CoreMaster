@@ -18,6 +18,11 @@ const router = createRouter({
           name: "mml-manager",
           component: () => import("../views/plugins/MmlManager.vue"),
         },
+        {
+          path: "plugins/db-manager",
+          name: "db-manager",
+          component: () => import("../views/plugins/DbManager.vue"),
+        },
       ],
     },
   ],

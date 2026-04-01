@@ -45,12 +45,6 @@
           <div class="metric-icon" :style="{ background: metric.bgColor, color: metric.iconColor }">
             <n-icon size="20"><component :is="metric.icon" /></n-icon>
           </div>
-          <div class="metric-trend" v-if="metric.trend">
-            <n-icon size="14" :color="metric.trend > 0 ? '#22C55E' : '#EF4444'">
-              <trending-up-outline v-if="metric.trend > 0" />
-              <trending-down-outline v-else />
-            </n-icon>
-          </div>
         </div>
         <div class="metric-value">{{ metric.value }}</div>
         <div class="metric-label">{{ metric.label }}</div>
@@ -68,22 +62,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, markRaw, type Component } from "vue";
+import { ref, reactive, onMounted, onUnmounted, markRaw } from "vue";
 import { useRouter } from "vue-router";
 import { NIcon } from "naive-ui";
 import {
   DocumentTextOutline,
-  GitCompareOutline,
-  ScanOutline,
-  CreateOutline,
-  CheckmarkCircleOutline,
   CloudOfflineOutline,
-  TrendingUpOutline,
-  TrendingDownOutline,
   TerminalOutline,
   ServerOutline,
 } from "@vicons/ionicons5";
-import { fetchPlugins, type PluginInfo, type MenuItem } from "../api";
+import { fetchPlugins, type PluginInfo } from "../api";
 import { fetchMmlStats } from "../api/mml-manager";
 import { fetchTables } from "../api/db-manager";
 
@@ -95,11 +83,10 @@ interface Metric {
   label: string;
   value: string | number;
   sub?: string;
-  icon: Component;
+  icon: any;
   bgColor: string;
   iconColor: string;
   glowColor: string;
-  trend?: number;
   link?: string;
 }
 
@@ -107,7 +94,6 @@ const metrics = ref<Metric[]>([]);
 
 // ── Hero mouse tracking ─────────────────────────────────────────────────────
 const heroRef = ref<HTMLElement | null>(null);
-const heroMouse = reactive({ x: 0, y: 0, active: false });
 
 const heroGlowStyle = ref<Record<string, string>>({});
 
@@ -117,16 +103,12 @@ function onHeroMouseMove(e: MouseEvent) {
   const rect = el.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
-  heroMouse.x = x;
-  heroMouse.y = y;
-  heroMouse.active = true;
   heroGlowStyle.value = {
     opacity: "1",
     background: `radial-gradient(480px circle at ${x}px ${y}px, rgba(37, 99, 235, 0.07), rgba(6, 182, 212, 0.03) 40%, transparent 70%)`,
   };
 }
 function onHeroMouseLeave() {
-  heroMouse.active = false;
   heroGlowStyle.value = { opacity: "0" };
 }
 
@@ -175,32 +157,15 @@ function onCardMouseLeave(idx: number) {
 // ── Color palettes per module (light tech theme) ────────────────────────────
 const pluginColorMap: Record<string, { bg: string; color: string; glow: string }> = {
   mml_manager:  { bg: "rgba(34, 197, 94, 0.1)",    color: "#16A34A", glow: "radial-gradient(ellipse at top left, rgba(34, 197, 94, 0.04), transparent 70%)" },
-  version_diff: { bg: "rgba(139, 92, 246, 0.1)",    color: "#7C3AED", glow: "radial-gradient(ellipse at top left, rgba(139, 92, 246, 0.04), transparent 70%)" },
-  mml_graph:    { bg: "rgba(6, 182, 212, 0.1)",     color: "#0891B2", glow: "radial-gradient(ellipse at top left, rgba(6, 182, 212, 0.04), transparent 70%)" },
-  script_gen:   { bg: "rgba(245, 158, 11, 0.1)",    color: "#D97706", glow: "radial-gradient(ellipse at top left, rgba(245, 158, 11, 0.04), transparent 70%)" },
-  validator:    { bg: "rgba(239, 68, 68, 0.1)",     color: "#DC2626", glow: "radial-gradient(ellipse at top left, rgba(239, 68, 68, 0.04), transparent 70%)" },
   db_manager:   { bg: "rgba(37, 99, 235, 0.1)",     color: "#2563EB", glow: "radial-gradient(ellipse at top left, rgba(37, 99, 235, 0.04), transparent 70%)" },
 };
 
-const pluginIconMap: Record<string, Component> = {
+const pluginIconMap: Record<string, any> = {
   mml_manager: markRaw(DocumentTextOutline),
-  version_diff: markRaw(GitCompareOutline),
-  mml_graph: markRaw(ScanOutline),
-  script_gen: markRaw(CreateOutline),
-  validator: markRaw(CheckmarkCircleOutline),
   db_manager: markRaw(ServerOutline),
 };
 
-const pluginLabelMap: Record<string, string> = {
-  mml_manager: "MML 脚本",
-  version_diff: "版本对比",
-  mml_graph: "图谱节点",
-  script_gen: "生成模板",
-  validator: "校验规则",
-  db_manager: "数据库管理",
-};
-
-async function buildMetrics(plugins: PluginInfo[], menus: MenuItem[]): Promise<Metric[]> {
+async function buildMetrics(plugins: PluginInfo[]): Promise<Metric[]> {
   const result: Metric[] = [
     {
       key: "plugins",
@@ -220,33 +185,17 @@ async function buildMetrics(plugins: PluginInfo[], menus: MenuItem[]): Promise<M
   let dbTableCount = 0;
   try { const tables = await fetchTables(); dbTableCount = tables.length; } catch { /* */ }
 
-  // Canonical order: matches sidebar menu order
-  const pluginOrder = [
-    "mml_manager",
-    "version_diff",
-    "mml_graph",
-    "script_gen",
-    "validator",
-    "db_manager",
-  ];
-  const sortedPlugins = [...plugins].sort((a, b) => {
-    const ai = pluginOrder.indexOf(a.name);
-    const bi = pluginOrder.indexOf(b.name);
-    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-  });
-
-  for (const plugin of sortedPlugins) {
-    const menu = menus.find((m) => m.path === `/plugins/${plugin.name.replace(/_/g, "-")}`);
+  for (const plugin of plugins) {
     const colors = pluginColorMap[plugin.name] || { bg: "rgba(37, 99, 235, 0.08)", color: "#2563EB", glow: "radial-gradient(ellipse at top left, rgba(37, 99, 235, 0.04), transparent 70%)" };
 
     const base = {
       key: plugin.name,
-      label: pluginLabelMap[plugin.name] || plugin.name,
+      label: plugin.menu_title,
       icon: pluginIconMap[plugin.name] || markRaw(TerminalOutline),
       bgColor: colors.bg,
       iconColor: colors.color,
       glowColor: colors.glow,
-      link: menu?.path,
+      link: plugin.path,
     };
 
     if (plugin.name === "mml_manager" && mmlStats) {
@@ -267,7 +216,7 @@ let entranceTimer: ReturnType<typeof setTimeout> | null = null;
 onMounted(async () => {
   try {
     const res = await fetchPlugins();
-    metrics.value = await buildMetrics(res.plugins, res.menus);
+    metrics.value = await buildMetrics(res.plugins);
   } catch (e) {
     console.error(e);
     metrics.value = [];
@@ -544,10 +493,6 @@ onUnmounted(() => {
 }
 .metric-card:hover .metric-icon {
   transform: scale(1.08);
-}
-.metric-trend {
-  display: flex;
-  align-items: center;
 }
 .metric-value {
   font-family: 'Exo 2', monospace;

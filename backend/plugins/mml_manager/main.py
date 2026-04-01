@@ -20,7 +20,6 @@ class Plugin:
     async def on_register(self, ctx: PluginContext) -> None:
         self.parser = ctx.get_service(ParserService)
         self.db = ctx.get_service(DatabaseService)
-        ctx.register_menu("MML 管理", "document", "/plugins/mml-manager")
 
         # Create database tables
         await self.db.execute("""

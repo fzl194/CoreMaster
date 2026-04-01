@@ -17,15 +17,6 @@ def test_context_get_service():
     assert isinstance(ctx.get_service(FakeService), FakeService)
 
 
-def test_context_register_menu():
-    registry = ServiceRegistry()
-    ctx = PluginContext(registry, name="test")
-    ctx.register_menu("Test Page", "test-icon", "/plugins/test")
-    menus = ctx.get_menus()
-    assert len(menus) == 1
-    assert menus[0]["title"] == "Test Page"
-
-
 def test_loader_scan_plugins(tmp_path):
     # 创建一个模拟插件目录
     plugin_dir = tmp_path / "test_plugin"

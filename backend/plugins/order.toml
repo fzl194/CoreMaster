@@ -1,0 +1,3 @@
+# 插件展示顺序配置
+# 按此文件中的顺序展示侧边栏和首页的插件
+order = ["mml_manager", "db_manager"]

@@ -199,7 +199,6 @@ import { VueMonacoEditor } from "@guolao/vue-monaco-editor";
 import {
   fetchNeVersions,
   fetchEntries,
-  fetchEntryPath,
   createFolder,
   deleteEntry,
   getFileContent,
@@ -234,7 +233,7 @@ const newFolderName = ref("");
 // Upload modal
 const showUploadModal = ref(false);
 const globalVersionId = ref<number | null>(null);
-const uploadFileList = ref<{ file: File | null; name: string; neVersionId: number | null }[]>([]);
+const uploadFileList = ref<{ file: File | null | undefined; name: string; neVersionId: number | null }[]>([]);
 const uploading = ref(false);
 const uploadRef = ref<any>(null);
 
@@ -617,8 +616,8 @@ async function doUpload() {
 
 // ── Init ────────────────────────────────────────────────────────────────────
 
-onMounted(() => {
-  Promise.all([loadNeVersions(), loadEntries()]);
+onMounted(async () => {
+  await Promise.all([loadNeVersions(), loadEntries()]);
 });
 </script>
 
@@ -763,24 +762,5 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-</style>
-
-<style>
-/* Global overrides for light data table */
-.light-table .n-data-table-th {
-  background: #F8FAFC !important;
-  color: #475569 !important;
-  border-color: #E2E8F0 !important;
-  font-size: 12px;
-  font-family: 'Fira Sans', sans-serif;
-  font-weight: 600;
-}
-.light-table .n-data-table-td {
-  background: #FFFFFF !important;
-  border-color: #F1F5F9 !important;
-}
-.light-table .n-data-table-tr:hover .n-data-table-td {
-  background: #F8FAFC !important;
 }
 </style>

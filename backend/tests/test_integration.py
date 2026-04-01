@@ -25,11 +25,14 @@ async def test_list_plugins(client):
     resp = await client.get("/api/plugins")
     assert resp.status_code == 200
     data = resp.json()
-    assert "menus" in data
     assert "plugins" in data
-    # 至少有 mml_manager
+    # 至少有 mml_manager，且包含 menu_title 和 icon
     names = [p["name"] for p in data["plugins"]]
     assert "mml_manager" in names
+    mml = next(p for p in data["plugins"] if p["name"] == "mml_manager")
+    assert mml["menu_title"] == "MML 管理"
+    assert mml["icon"] == "document"
+    assert mml["path"] == "/plugins/mml-manager"
 
 
 @pytest.mark.asyncio

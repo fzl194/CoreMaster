@@ -53,11 +53,6 @@ export async function fetchEntries(parentId?: number | null): Promise<FileEntry[
   return data;
 }
 
-export async function fetchEntryPath(entryId: number): Promise<PathSegment[]> {
-  const { data } = await api.get<PathSegment[]>(`/plugins/mml_manager/entries/${entryId}/path`);
-  return data;
-}
-
 export async function createFolder(name: string, parentId?: number | null): Promise<FileEntry> {
   const payload: Record<string, unknown> = { name, type: "folder" };
   if (parentId !== undefined && parentId !== null) {
@@ -80,11 +75,6 @@ export async function getFileContent(id: number): Promise<string> {
 
 export async function updateFileContent(id: number, content: string): Promise<void> {
   await api.put(`/plugins/mml_manager/files/${id}/content`, { content });
-}
-
-export async function updateFileMeta(id: number, payload: { ne_version_id?: number; name?: string }): Promise<FileEntry> {
-  const { data } = await api.put<FileEntry>(`/plugins/mml_manager/files/${id}`, payload);
-  return data;
 }
 
 export function getFileDownloadUrl(id: number): string {

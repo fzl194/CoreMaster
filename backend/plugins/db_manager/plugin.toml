@@ -1,0 +1,14 @@
+# backend/plugins/db_manager/plugin.toml
+[plugin]
+name = "db_manager"
+version = "0.1.0"
+description = "数据库表管理与数据浏览"
+
+[plugin.backend]
+entry = "main.py"
+routes_prefix = "/api/plugins/db_manager"
+
+[plugin.frontend]
+entry = "src/index.vue"
+menu_title = "数据库管理"
+icon = "database"
