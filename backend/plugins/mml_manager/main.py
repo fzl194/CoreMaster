@@ -1,12 +1,18 @@
 # backend/plugins/mml_manager/main.py
 import json
 import shutil
+import sys
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Query, Form
 from fastapi.responses import FileResponse, JSONResponse
 from core.plugin.context import PluginContext
 from core.services.parser import ParserService
 from core.services.database import DatabaseService
+
+# Ensure candidate_engine can be imported
+_PLUGIN_DIR = Path(__file__).resolve().parent
+if str(_PLUGIN_DIR) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_DIR))
 
 MML_STORAGE_ROOT = Path(__file__).resolve().parent.parent.parent / "data" / "mml_files"
 
@@ -615,3 +621,284 @@ class Plugin:
                 "file_count": fc[0]["cnt"] if fc else 0,
                 "ne_version_count": nc[0]["cnt"] if nc else 0,
             }
+
+        # ── Dependency Mining: Command Instance Extraction ─────────────
+
+        @self.router.post("/scripts/{file_id}/extract-commands")
+        async def extract_commands(file_id: int):
+            """Parse a script file and persist command instances."""
+            rows = await self.db.query(
+                "SELECT id, name, file_path, ne_version_id FROM file_entry WHERE id=? AND type='file'",
+                (file_id,),
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"detail": "文件不存在"})
+            entry = rows[0]
+            ne_version_id = entry["ne_version_id"]
+            if not ne_version_id:
+                return JSONResponse(status_code=400, content={"detail": "文件未绑定网元版本"})
+
+            p = _safe_file_path(entry["file_path"])
+            if p is None or not p.exists():
+                return JSONResponse(status_code=404, content={"detail": "磁盘文件不存在"})
+            content = p.read_text(encoding="utf-8")
+
+            result = self.parser.parse_text_with_report(content)
+            commands = result["commands"]
+            report = result["report"]
+
+            # Delete old instances for re-extraction
+            await self.db.execute(
+                "DELETE FROM command_instance WHERE file_entry_id=?", (file_id,)
+            )
+
+            instances = []
+            for idx, cmd in enumerate(commands):
+                params_json = json.dumps(cmd["params"], ensure_ascii=False)
+                await self.db.execute(
+                    "INSERT INTO command_instance "
+                    "(file_entry_id, ne_version_id, command_index, operation, name, params_json, line_number) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (file_id, ne_version_id, idx, cmd["operation"], cmd["name"],
+                     params_json, cmd["line_number"]),
+                )
+                inst_rows = await self.db.query(
+                    "SELECT id, file_entry_id, ne_version_id, command_index, "
+                    "operation, name, params_json, line_number "
+                    "FROM command_instance WHERE file_entry_id=? AND command_index=? "
+                    "ORDER BY id DESC LIMIT 1",
+                    (file_id, idx),
+                )
+                if inst_rows:
+                    row = inst_rows[0]
+                    row["params"] = json.loads(row["params_json"])
+                    instances.append(row)
+
+            return {"instances": instances, "total": len(instances), "report": report}
+
+        # ── Dependency Mining: Candidate Generation ────────────────────
+
+        @self.router.post("/candidates/generate")
+        async def generate_candidates_endpoint(payload: dict):
+            """Generate dependency candidates for a given NE version scope."""
+            ne_version_id = payload["ne_version_id"]
+
+            # Query all command instances for this ne_version, grouped by file
+            rows = await self.db.query(
+                "SELECT id, file_entry_id, command_index, operation, name, "
+                "params_json, line_number "
+                "FROM command_instance WHERE ne_version_id=? "
+                "ORDER BY file_entry_id, command_index",
+                (ne_version_id,),
+            )
+
+            scripts: dict[int, dict] = {}
+            for row in rows:
+                fid = row["file_entry_id"]
+                if fid not in scripts:
+                    scripts[fid] = {
+                        "file_entry_id": fid,
+                        "ne_version_id": ne_version_id,
+                        "commands": [],
+                    }
+                scripts[fid]["commands"].append({
+                    "operation": row["operation"],
+                    "name": row["name"],
+                    "params": json.loads(row["params_json"]),
+                    "line_number": row["line_number"],
+                })
+
+            if not scripts:
+                return {"candidates": [], "total": 0}
+
+            from candidate_engine import generate_candidates as _gen_candidates
+            candidates = _gen_candidates(list(scripts.values()))
+
+            # Persist candidates (upsert by unique key)
+            persisted = []
+            for c in candidates:
+                scores_json = json.dumps(c["scores"], ensure_ascii=False)
+                evidence_json = json.dumps(c["evidence"], ensure_ascii=False)
+                try:
+                    await self.db.execute(
+                        "INSERT INTO dependency_candidate "
+                        "(ne_version_id, ref_command, ref_param, def_command, def_param, "
+                        "status, confidence, scores_json, evidence_json) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (ne_version_id, c["ref_command"], c["ref_param"],
+                         c["def_command"], c["def_param"], c["status"],
+                         c["confidence"], scores_json, evidence_json),
+                    )
+                except Exception:
+                    await self.db.execute(
+                        "UPDATE dependency_candidate SET status=?, confidence=?, "
+                        "scores_json=?, evidence_json=?, updated_at=CURRENT_TIMESTAMP "
+                        "WHERE ne_version_id=? AND ref_command=? AND ref_param=? "
+                        "AND def_command=? AND def_param=?",
+                        (c["status"], c["confidence"], scores_json, evidence_json,
+                         ne_version_id, c["ref_command"], c["ref_param"],
+                         c["def_command"], c["def_param"]),
+                    )
+
+                cand_rows = await self.db.query(
+                    "SELECT id, ne_version_id, ref_command, ref_param, def_command, "
+                    "def_param, status, confidence, scores_json, evidence_json, "
+                    "created_at, updated_at "
+                    "FROM dependency_candidate WHERE ne_version_id=? "
+                    "AND ref_command=? AND ref_param=? AND def_command=? AND def_param=?",
+                    (ne_version_id, c["ref_command"], c["ref_param"],
+                     c["def_command"], c["def_param"]),
+                )
+                if cand_rows:
+                    row = cand_rows[0]
+                    row["scores"] = json.loads(row["scores_json"])
+                    row["evidence"] = json.loads(row["evidence_json"])
+                    persisted.append(row)
+
+            return {"candidates": persisted, "total": len(persisted)}
+
+        # ── Dependency Mining: Review Queue ─────────────────────────────
+
+        @self.router.get("/candidates")
+        async def list_candidates(
+            ne_version_id: int | None = Query(None),
+            status: str | None = Query(None),
+        ):
+            """List candidates with optional filters."""
+            conditions = []
+            params: list = []
+            if ne_version_id is not None:
+                conditions.append("ne_version_id=?")
+                params.append(ne_version_id)
+            if status is not None:
+                conditions.append("status=?")
+                params.append(status)
+
+            where = ""
+            if conditions:
+                where = "WHERE " + " AND ".join(conditions)
+
+            rows = await self.db.query(
+                f"SELECT id, ne_version_id, ref_command, ref_param, def_command, def_param, "
+                f"status, confidence, scores_json, evidence_json, "
+                f"graph_edge_id, created_at, updated_at "
+                f"FROM dependency_candidate {where} ORDER BY confidence DESC",
+                tuple(params),
+            )
+            result = []
+            for row in rows:
+                row["scores"] = json.loads(row["scores_json"])
+                row["evidence"] = json.loads(row["evidence_json"])
+                result.append(row)
+            return result
+
+        @self.router.post("/candidates/{candidate_id}/accept")
+        async def accept_candidate(candidate_id: int, payload: dict):
+            """Accept a candidate → create graph edge + changelog."""
+            reviewer = payload.get("reviewer", "anonymous")
+
+            rows = await self.db.query(
+                "SELECT id, ne_version_id, ref_command, ref_param, def_command, def_param, "
+                "status, confidence, evidence_json, review_history_json "
+                "FROM dependency_candidate WHERE id=?",
+                (candidate_id,),
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"detail": "候选记录不存在"})
+
+            cand = rows[0]
+            if cand["status"] == "accepted":
+                return JSONResponse(status_code=400, content={"detail": "候选已被接受"})
+
+            ne_version_id = cand["ne_version_id"]
+            ref_cmd = cand["ref_command"]
+            ref_param = cand["ref_param"]
+            def_cmd = cand["def_command"]
+            def_param = cand["def_param"]
+
+            # Upsert graph edge
+            existing = await self.db.query(
+                "SELECT id FROM graph_edge WHERE ne_version_id=? "
+                "AND ref_command=? AND ref_param=? AND def_command=? AND def_param=?",
+                (ne_version_id, ref_cmd, ref_param, def_cmd, def_param),
+            )
+            if existing:
+                edge_id = existing[0]["id"]
+                await self.db.execute(
+                    "UPDATE graph_edge SET status='active', confidence=?, "
+                    "evidence_json=?, confirmed_by=?, updated_at=CURRENT_TIMESTAMP "
+                    "WHERE id=?",
+                    (cand["confidence"], cand["evidence_json"], reviewer, edge_id),
+                )
+            else:
+                await self.db.execute(
+                    "INSERT INTO graph_edge "
+                    "(ne_version_id, ref_command, ref_param, def_command, def_param, "
+                    "status, source, confidence, evidence_json, confirmed_by) "
+                    "VALUES (?, ?, ?, ?, ?, 'active', 'mined', ?, ?, ?)",
+                    (ne_version_id, ref_cmd, ref_param, def_cmd, def_param,
+                     cand["confidence"], cand["evidence_json"], reviewer),
+                )
+                edge_rows = await self.db.query(
+                    "SELECT id FROM graph_edge WHERE ne_version_id=? "
+                    "AND ref_command=? AND ref_param=? AND def_command=? AND def_param=?",
+                    (ne_version_id, ref_cmd, ref_param, def_cmd, def_param),
+                )
+                edge_id = edge_rows[0]["id"] if edge_rows else None
+
+            # Update candidate status
+            review_entry = {"action": "accepted", "reviewer": reviewer}
+            current_history = json.loads(cand.get("review_history_json") or "[]")
+            current_history.append(review_entry)
+
+            await self.db.execute(
+                "UPDATE dependency_candidate SET status='accepted', graph_edge_id=?, "
+                "review_history_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (edge_id, json.dumps(current_history, ensure_ascii=False), candidate_id),
+            )
+
+            # Create changelog entry
+            await self.db.execute(
+                "INSERT INTO graph_changelog "
+                "(dependency_id, candidate_id, change_type, snapshot_after, trigger_type, trigger_id) "
+                "VALUES (?, ?, 'add', ?, 'human', ?)",
+                (edge_id, candidate_id,
+                 json.dumps({"status": "active", "confidence": cand["confidence"]},
+                            ensure_ascii=False),
+                 reviewer),
+            )
+
+            return {"ok": True, "graph_edge_id": edge_id, "candidate_id": candidate_id}
+
+        @self.router.post("/candidates/{candidate_id}/reject")
+        async def reject_candidate(candidate_id: int, payload: dict):
+            """Reject a candidate — no graph edge created."""
+            reviewer = payload.get("reviewer", "anonymous")
+
+            rows = await self.db.query(
+                "SELECT id, status FROM dependency_candidate WHERE id=?",
+                (candidate_id,),
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"detail": "候选记录不存在"})
+
+            if rows[0]["status"] == "rejected":
+                return JSONResponse(status_code=400, content={"detail": "候选已被拒绝"})
+
+            await self.db.execute(
+                "UPDATE dependency_candidate SET status='rejected', "
+                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (candidate_id,),
+            )
+
+            # Create changelog
+            await self.db.execute(
+                "INSERT INTO graph_changelog "
+                "(candidate_id, change_type, snapshot_after, trigger_type, trigger_id) "
+                "VALUES (?, 'reject', ?, 'human', ?)",
+                (candidate_id,
+                 json.dumps({"status": "rejected"}, ensure_ascii=False),
+                 reviewer),
+            )
+
+            return {"ok": True, "candidate_id": candidate_id}
