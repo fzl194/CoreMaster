@@ -427,24 +427,30 @@ const entryColumns = computed<DataTableColumns<FileEntry>>(() => [
       if (isParent) return h("span", { style: "color: #94A3B8" }, "—");
       if (row.type === "folder") {
         return h(
-          NPopconfirm,
-          { onPositiveClick: () => doDeleteEntry(row) },
-          {
-            trigger: () =>
-              h(
-                NButton,
-                { text: true, size: "tiny", quaternary: true },
-                {
-                  icon: () => h(NIcon, { size: 16, color: "#64748B" }, () => h(TrashOutline)),
-                  default: () => "删除",
-                },
-              ),
-            default: () => `确定删除文件夹「${row.name}」?`,
-          },
+          "div",
+          { onClick: (e: Event) => e.stopPropagation() },
+          [
+            h(
+              NPopconfirm,
+              { onPositiveClick: () => doDeleteEntry(row) },
+              {
+                trigger: () =>
+                  h(
+                    NButton,
+                    { text: true, size: "tiny", quaternary: true },
+                    {
+                      icon: () => h(NIcon, { size: 16, color: "#64748B" }, () => h(TrashOutline)),
+                      default: () => "删除",
+                    },
+                  ),
+                default: () => `确定删除文件夹「${row.name}」?`,
+              },
+            ),
+          ],
         );
       }
       // File actions: download / edit / delete
-      return h("div", { style: "display: flex; gap: 4px" }, [
+      return h("div", { style: "display: flex; gap: 4px", onClick: (e: Event) => e.stopPropagation() }, [
         h(
           NButton,
           { text: true, size: "tiny", quaternary: true, onClick: () => downloadFile(row) },
@@ -479,7 +485,7 @@ const entryColumns = computed<DataTableColumns<FileEntry>>(() => [
 
 // ── Row double-click handling ───────────────────────────────────────────────
 
-function handleRowDblClick(row: FileEntry) {
+function handleRowClick(row: FileEntry) {
   const isParent = row.id === -1;
   if (isParent) {
     navigateUp();
@@ -490,10 +496,10 @@ function handleRowDblClick(row: FileEntry) {
   }
 }
 
-// Patch: NDataTable does not have a native row-dblclick event in the same way.
-// We need to use the `row-props` approach to attach dblclick handlers.
+// Patch: NDataTable does not have a native row-click event.
+// We use the `row-props` approach to attach click handlers.
 const entryRowProps = computed(() => (row: FileEntry) => ({
-  ondblclick: () => handleRowDblClick(row),
+  onclick: () => handleRowClick(row),
   style: "cursor: pointer",
 }));
 
