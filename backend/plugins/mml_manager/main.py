@@ -12,11 +12,18 @@ MML_STORAGE_ROOT = Path(__file__).resolve().parent.parent.parent / "data" / "mml
 
 
 def _safe_file_path(file_path: str | None) -> Path | None:
-    """校验 file_path 是否位于 MML_STORAGE_ROOT 下，防止路径穿越。"""
+    """校验 file_path 是否位于 MML_STORAGE_ROOT 下，防止路径穿越。
+
+    使用 is_relative_to() 而非字符串前缀比较，避免同前缀兄弟目录绕过
+    （如 /data/mml_files_backup 通过 /data/mml_files 的 startswith 检查）。
+    """
     if not file_path:
         return None
-    resolved = Path(file_path).resolve()
-    if not str(resolved).startswith(str(MML_STORAGE_ROOT)):
+    try:
+        resolved = Path(file_path).resolve()
+    except (OSError, ValueError):
+        return None
+    if not resolved.is_relative_to(MML_STORAGE_ROOT):
         return None
     return resolved
 

@@ -14,6 +14,9 @@ from core.services.parser import ParserService
 from core.plugin.loader import PluginLoader
 from core.plugin.context import PluginContext
 
+# 导入 _safe_file_path 做单元测试
+from plugins.mml_manager.main import _safe_file_path, MML_STORAGE_ROOT
+
 # Use a separate temp DB so we don't pollute the real one
 _TEST_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "test_mml.db"
 
@@ -571,3 +574,32 @@ async def test_22_duplicate_ne_version_rejected(client):
         "version": "V100R022",
     })
     assert resp.status_code == 409
+
+
+# ── 23-26. _safe_file_path 路径逃逸测试 ──────────────────────────────────────
+
+
+def test_23_safe_path_rejects_sibling_prefix():
+    """同前缀兄弟目录应被拒绝（核心 P0 修复验证）。"""
+    # MML_STORAGE_ROOT 是 .../data/mml_files
+    # 构造 .../data/mml_files_backup/secret.txt —— startswith 会误放行
+    sibling = MML_STORAGE_ROOT.parent / (MML_STORAGE_ROOT.name + "_backup") / "secret.txt"
+    assert _safe_file_path(str(sibling)) is None
+
+
+def test_24_safe_path_accepts_valid():
+    """合法的根目录内路径应被接受。"""
+    valid = MML_STORAGE_ROOT / "123" / "456.mml"
+    assert _safe_file_path(str(valid)) is not None
+
+
+def test_25_safe_path_rejects_none():
+    """None 和空路径应返回 None。"""
+    assert _safe_file_path(None) is None
+    assert _safe_file_path("") is None
+
+
+def test_26_safe_path_rejects_traversal():
+    """路径穿越（../../etc/passwd）应被拒绝。"""
+    traversal = str(MML_STORAGE_ROOT / ".." / ".." / "etc" / "passwd")
+    assert _safe_file_path(traversal) is None

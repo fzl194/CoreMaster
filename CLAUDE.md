@@ -13,6 +13,12 @@
 
 Claude 在完成实现后，必须提供一份可供 Codex 审查的交接说明；在 Codex 的问题被修复或被明确处置之前，不应将任务视为完成。
 
+**Claude 不得修改属于 Codex 职责的文档内容。** 具体来说：
+
+- Claude 不得修改 Codex 产出的审查文档（`docs/analysis/` 下的 `codex-review.md`）。
+- Claude 不得修改交接文档（`docs/handoffs/` 下的 `claude-handoff.md`）中的状态标记、处置结论等应由 Codex 回写的内容。Claude 只负责编写初始交接内容。
+- 当 Claude 根据 Codex 审查意见完成代码修复后，应产出独立的交付说明文档（如 `docs/handoffs/YYYY-MM-DD-<task-slug>-claude-fix.md`），由 Codex 去回写 handoff 状态和 review 结论。
+
 ## 项目概述
 
 CoreMaster 是一个基于插件化架构的 MML（人机语言）命令管理与解析平台，用于核心网配置管理。后端采用 FastAPI + 动态插件系统，前端采用 Vue 3 + Naive UI（亮色主题）。
