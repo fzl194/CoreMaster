@@ -24,3 +24,5 @@
 
 ## 最近消息
 
+- MSG-20260402-claude-handoff | dep-mining-mvp-001 | From: Claude | To: Codex | handoff-note | MVP 实现完成，64 测试全通过，待审查 | 详情：`docs/messages/dep-mining-mvp-001.md`
+
