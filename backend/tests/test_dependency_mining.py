@@ -746,3 +746,118 @@ async def test_full_incremental_pipeline(client):
     await client.post(f"{BASE}/candidates/{cand['id']}/accept", json={"reviewer": "admin"})
     cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
     assert cands[0]["status"] == "graph"
+
+
+@pytest.mark.asyncio
+async def test_mining_status_file_name_field(client):
+    """mining-status 返回 file_name 字段（不是 name）。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_FNAME", "V_FNAME")
+    entries, _ = await _upload_file(client, "fname_test.mml", b'ADD VPN: VPN="v1";', ne_id)
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries[0]["id"]]})
+
+    resp = await client.get(f"{BASE}/files/mining-status", params={"ne_version_id": ne_id})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) >= 1
+    item = data[0]
+    assert "file_name" in item
+    assert item["file_name"] == "fname_test.mml"
+
+
+@pytest.mark.asyncio
+async def test_state_machine_non_graph_to_graph_blocked(client):
+    """non_graph 不能直接转 graph（必须先 revert 到 pending）。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_SM_NG2G", "V_SM_NG2G")
+    entries, _ = await _upload_file(client, "sm_ng2g.mml", b'ADD VPN: VPN="ng2g";\nADD APN: VRFNAME="ng2g";', ne_id)
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries[0]["id"]]})
+
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    cand_id = cands[0]["id"]
+
+    # pending → non_graph (legal)
+    await client.post(f"{BASE}/candidates/{cand_id}/mark-non-graph", json={"reason": "test", "reviewer": "admin"})
+
+    # non_graph → accept/graph (illegal, must go through pending first)
+    resp = await client.post(f"{BASE}/candidates/{cand_id}/accept", json={"reviewer": "admin"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_state_machine_graph_to_non_graph_blocked(client):
+    """graph 不能直接转 non_graph（必须先 revert 到 pending）。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_SM_G2NG", "V_SM_G2NG")
+    entries, _ = await _upload_file(client, "sm_g2ng.mml", b'ADD VPN: VPN="g2ng";\nADD APN: VRFNAME="g2ng";', ne_id)
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries[0]["id"]]})
+
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    cand_id = cands[0]["id"]
+
+    # pending → graph (legal)
+    await client.post(f"{BASE}/candidates/{cand_id}/accept", json={"reviewer": "admin"})
+
+    # graph → non_graph (illegal)
+    resp = await client.post(f"{BASE}/candidates/{cand_id}/mark-non-graph", json={"reason": "test", "reviewer": "admin"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_state_machine_graph_to_rejected_blocked(client):
+    """graph 不能直接转 rejected（必须先 revert 到 pending）。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_SM_G2R", "V_SM_G2R")
+    entries, _ = await _upload_file(client, "sm_g2r.mml", b'ADD VPN: VPN="g2r";\nADD APN: VRFNAME="g2r";', ne_id)
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries[0]["id"]]})
+
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    cand_id = cands[0]["id"]
+
+    # pending → graph (legal)
+    await client.post(f"{BASE}/candidates/{cand_id}/accept", json={"reviewer": "admin"})
+
+    # graph → rejected (illegal)
+    resp = await client.post(f"{BASE}/candidates/{cand_id}/reject", json={"reviewer": "admin"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_state_machine_non_graph_to_rejected_blocked(client):
+    """non_graph 不能直接转 rejected（必须先 revert 到 pending）。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_SM_NG2R", "V_SM_NG2R")
+    entries, _ = await _upload_file(client, "sm_ng2r.mml", b'ADD VPN: VPN="ng2r";\nADD APN: VRFNAME="ng2r";', ne_id)
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries[0]["id"]]})
+
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    cand_id = cands[0]["id"]
+
+    # pending → non_graph (legal)
+    await client.post(f"{BASE}/candidates/{cand_id}/mark-non-graph", json={"reason": "test", "reviewer": "admin"})
+
+    # non_graph → rejected (illegal)
+    resp = await client.post(f"{BASE}/candidates/{cand_id}/reject", json={"reviewer": "admin"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_revert_graph_edge_status_revoked(client):
+    """graph 回退时 graph_edge 状态应变为 'revoked'（不是 'deleted'）。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_EDGE_ST", "V_EDGE_ST")
+    entries, _ = await _upload_file(client, "edge_st.mml", b'ADD VPN: VPN="est";\nADD APN: VRFNAME="est";', ne_id)
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries[0]["id"]]})
+
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    cand_id = cands[0]["id"]
+
+    # pending → graph
+    await client.post(f"{BASE}/candidates/{cand_id}/accept", json={"reviewer": "admin"})
+
+    # Get graph_edge_id
+    db = client._transport.app.state.registry.get(DatabaseService)
+    cand_rows = await db.query("SELECT graph_edge_id FROM dependency_candidate WHERE id=?", (cand_id,))
+    edge_id = cand_rows[0]["graph_edge_id"]
+    assert edge_id is not None
+
+    # graph → pending (revert)
+    await client.post(f"{BASE}/candidates/{cand_id}/revert", json={"reviewer": "admin"})
+
+    # Verify graph_edge status is 'revoked'
+    edge_rows = await db.query("SELECT status FROM graph_edge WHERE id=?", (edge_id,))
+    assert edge_rows[0]["status"] == "revoked"

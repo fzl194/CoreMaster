@@ -930,8 +930,14 @@ class Plugin:
                 return JSONResponse(status_code=404, content={"detail": "候选记录不存在"})
 
             cand = rows[0]
-            if cand["status"] == "graph":
-                return JSONResponse(status_code=400, content={"detail": "候选已被接受"})
+            current = cand["status"]
+            # pending-like states (including legacy auto_passed/llm_review/man_review) can accept
+            pending_like = ("pending", "auto_passed", "llm_review", "man_review")
+            if current not in (*pending_like, "rejected"):
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": f"只能从 pending 或 rejected 状态接受，当前: {current}"},
+                )
 
             ne_version_id = cand["ne_version_id"]
             ref_cmd = cand["ref_command"]
@@ -1005,8 +1011,13 @@ class Plugin:
             if not rows:
                 return JSONResponse(status_code=404, content={"detail": "候选记录不存在"})
 
-            if rows[0]["status"] == "rejected":
-                return JSONResponse(status_code=400, content={"detail": "候选已被拒绝"})
+            current = rows[0]["status"]
+            pending_like = ("pending", "auto_passed", "llm_review", "man_review")
+            if current not in pending_like:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": f"只能从 pending 状态拒绝，当前: {current}"},
+                )
 
             await self.db.execute(
                 "UPDATE dependency_candidate SET status='rejected', review_route=NULL, "
@@ -1042,8 +1053,13 @@ class Plugin:
                 return JSONResponse(status_code=404, content={"detail": "候选记录不存在"})
 
             cand = rows[0]
-            if cand["status"] == "non_graph":
-                return JSONResponse(status_code=400, content={"detail": "候选已被标记为非图依赖"})
+            current = cand["status"]
+            pending_like = ("pending", "auto_passed", "llm_review", "man_review")
+            if current not in pending_like:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": f"只能从 pending 状态标记非图谱，当前: {current}"},
+                )
 
             # Update status to non_graph, clear review_route
             review_entry = {"action": "mark_non_graph", "reviewer": reviewer, "reason": reason}
@@ -1103,11 +1119,11 @@ class Plugin:
             review_route = self._determine_review_route(cand["confidence"])
 
             if current_status == "graph":
-                # Soft-delete the associated graph_edge (set status='deleted')
+                # Revoke the associated graph_edge (set status='revoked')
                 edge_id = cand.get("graph_edge_id")
                 if edge_id:
                     await self.db.execute(
-                        "UPDATE graph_edge SET status='deleted', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        "UPDATE graph_edge SET status='revoked', updated_at=CURRENT_TIMESTAMP WHERE id=?",
                         (edge_id,),
                     )
 
@@ -1405,7 +1421,7 @@ class Plugin:
         async def get_mining_status(ne_version_id: int = Query(...)):
             """Query file mining status for an NE version."""
             rows = await self.db.query(
-                "SELECT fe.id as file_entry_id, fe.name, fe.file_size, fe.ne_version_id, "
+                "SELECT fe.id as file_entry_id, fe.name as file_name, fe.file_size, fe.ne_version_id, "
                 "fmr.mined, fmr.algorithm_version, fmr.command_count, "
                 "fmr.created_at as mined_at "
                 "FROM file_entry fe "
