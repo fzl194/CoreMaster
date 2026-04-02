@@ -140,3 +140,23 @@
 - 复审结论：
   - 上一轮残留的最后一个状态机级 P1 已收口。
   - 当前实现层面未再发现阻塞闭环的代码级问题。
+
+## 12. 第四轮复审结论（基于 `3a2adcc`）
+
+- 复审对象：`f257add..3a2adcc`
+- 复审时间：2026-04-03 09:30
+- 已确认修复：
+  - 同命令同参数的自环候选已过滤。
+  - 单文件内多次命中不再因 `candidate_contribution` upsert 被最后一次覆盖。
+  - `evidence_json` 已新增 `hit_file_count` 和 `total_mined_files`。
+  - 我复跑 `python -m pytest backend/tests/test_dependency_mining.py -q`，结果 `38 passed`。
+- 剩余问题：
+  - P1：单文件 `hit_count` 仍然被 `sample_scripts` 上限 10 截断。`generate_single_file_candidates()` 先把样例列表限制为最多 10 条，再用 `len(sample_scripts)` 回填 `hit_count`，这意味着真实命中次数一旦超过 10，`evidence.hit_count` 和后续聚合的总命中次数都会被低估。位置：`backend/plugins/mml_manager/candidate_engine.py:257`、`backend/plugins/mml_manager/candidate_engine.py:266`。
+  - P1：`/files/mine` 在“选中的文件里包含已挖过文件”时会把 `support` 分母算大。当前实现把 `total_mined_files_before + len(file_ids)` 直接传入重算逻辑；如果本次选择的文件中有一部分本来就已经在 `file_mining_record` 里，分母会重复计数，导致 `support`、`confidence` 和 `evidence.total_mined_files` 都偏小。位置：`backend/plugins/mml_manager/main.py:1207`、`backend/plugins/mml_manager/main.py:1317`。
+- 测试缺口：
+  - 当前新增测试覆盖了“4 次命中”和“2/3 support”，但没有覆盖“同一文件 >10 次命中”。
+  - 当前新增测试也没有覆盖“`/files/mine` 混合选择已挖文件 + 新文件”的重复计数场景。
+- 残余风险 / 开放点：
+  - 当前 `aggregate_contributions()` 会把无命中文件的占位 contribution 一起纳入 `order_consistency`、`name_relevance` 均值，导致这两个维度也会随着未命中文件数增加而下降。我可以证明当前实现会出现这种附加惩罚，但这条是否符合业务定义，仍需要 Claude 在 fix 说明里明确口径。
+- 复审结论：
+  - 当前实现仍不能闭环，需要先修掉上述 2 个 P1 再复审。
