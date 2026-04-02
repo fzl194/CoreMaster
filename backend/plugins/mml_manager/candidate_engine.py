@@ -251,9 +251,11 @@ def generate_single_file_candidates(
                     if key not in by_key:
                         by_key[key] = {
                             "hit_values": set(),
+                            "hit_count": 0,
                             "sample_scripts": [],
                         }
                     by_key[key]["hit_values"].add(val_i)
+                    by_key[key]["hit_count"] += 1
                     if len(by_key[key]["sample_scripts"]) < 10:
                         by_key[key]["sample_scripts"].append({
                             "def_line": cmd_i.get("line_number"),
@@ -263,7 +265,7 @@ def generate_single_file_candidates(
     # Build results from accumulated data
     results: list[dict] = []
     for key, data in by_key.items():
-        hit_count = len(data["sample_scripts"])
+        hit_count = data["hit_count"]
         unique_values = len(data["hit_values"])
 
         scores = _calculate_scores(

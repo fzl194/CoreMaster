@@ -1030,3 +1030,53 @@ async def test_mine_support_uses_total_files(client):
     assert scores["support"] < 1.0, f"Expected support < 1.0 (2/3 files hit), got {scores['support']}"
     # 2 out of 3 files had the match
     assert abs(scores["support"] - 2/3) < 0.01, f"Expected support ≈ 0.667, got {scores['support']}"
+
+
+def test_single_file_hit_count_not_truncated_at_10():
+    """单文件 >10 次命中时 hit_count 不应被 sample_scripts 上限截断。"""
+    import sys
+    plugin_dir = str(Path(__file__).resolve().parent.parent / "plugins" / "mml_manager")
+    if plugin_dir not in sys.path:
+        sys.path.insert(0, plugin_dir)
+    from candidate_engine import generate_single_file_candidates
+
+    # 1 APN + 15 VPNINST, all share same VPN value → 15 hits
+    commands = [
+        {"operation": "ADD", "name": "APN", "params": [{"name": "VPN", "value": "vpn1"}], "line_number": 1},
+    ]
+    for i in range(15):
+        commands.append(
+            {"operation": "ADD", "name": "VPNINST", "params": [{"name": "VRFNAME", "value": "vpn1"}], "line_number": 2 + i}
+        )
+
+    script = {"file_entry_id": 1, "ne_version_id": 1, "commands": commands}
+    results = generate_single_file_candidates(script)
+    assert len(results) == 1
+    r = results[0]
+    assert r["evidence"]["hit_count"] == 15, f"Expected 15 hits but got {r['evidence']['hit_count']}"
+    assert len(r["evidence"]["sample_scripts"]) == 10  # capped at 10 for samples
+
+
+@pytest.mark.asyncio
+async def test_mine_mixed_new_and_already_mined_files(client):
+    """混合选择已挖文件和新文件时 support 分母不应重复计数。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_MIXED", "V_MIXED")
+
+    # File 1: has VPN-APN match
+    entries1, _ = await _upload_file(client, "mix1.mml", b'ADD VPN: VPN="v1";\nADD APN: VRFNAME="v1";', ne_id)
+    # File 2: no match (different commands)
+    entries2, _ = await _upload_file(client, "mix2.mml", b'ADD EQM: EQMID="eqm1";', ne_id)
+
+    # Mine both files first
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries1[0]["id"], entries2[0]["id"]]})
+
+    # Now mine file 1 again (already mined) — support denominator should NOT increase
+    resp = await client.post(f"{BASE}/files/mine", json={"file_ids": [entries1[0]["id"]]})
+    assert resp.status_code == 200
+
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    assert len(cands) >= 1
+    scores = json.loads(cands[0]["scores_json"]) if isinstance(cands[0]["scores_json"], str) else cands[0]["scores_json"]
+
+    # Support should still be 1/2 = 0.5 (file 1 hit, file 2 no hit), not 1/3
+    assert abs(scores["support"] - 0.5) < 0.01, f"Expected support ≈ 0.5, got {scores['support']}"

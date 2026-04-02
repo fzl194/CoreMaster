@@ -1198,14 +1198,6 @@ class Plugin:
             # Get algorithm version
             alg_ver = "v1"
 
-            # Count total mined files for this ne_version (for support calculation)
-            total_mined_rows = await self.db.query(
-                "SELECT COUNT(DISTINCT file_entry_id) as cnt FROM file_mining_record "
-                "WHERE ne_version_id=? AND mined=1",
-                (ne_version_id,),
-            )
-            total_mined_files_before = total_mined_rows[0]["cnt"] if total_mined_rows else 0
-
             all_candidates = []
 
             for file_id in file_ids:
@@ -1313,34 +1305,45 @@ class Plugin:
                          contrib_evidence, contrib_scores),
                     )
 
-                    # Recalculate aggregated scores
-                    await self._recalculate_candidate_scores(cand_id, alg_ver, total_mined_files_before + len(file_ids))
+                    # Defer score recalculation until all files are processed
+                    all_candidates.append((cand_id, cand_status))
 
-                    # If status was 'rejected': reactivate
-                    if cand_status == "rejected":
-                        # Re-fetch confidence after recalculation
-                        updated_cand = await self.db.query(
-                            "SELECT confidence FROM dependency_candidate WHERE id=?",
-                            (cand_id,),
-                        )
-                        new_confidence = updated_cand[0]["confidence"] if updated_cand else confidence
-                        new_review_route = self._determine_review_route(new_confidence)
-                        await self.db.execute(
-                            "UPDATE dependency_candidate SET status='pending', review_route=?, "
-                            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                            (new_review_route, cand_id),
-                        )
+            # After all files processed: query actual distinct mined file count
+            total_mined_rows = await self.db.query(
+                "SELECT COUNT(DISTINCT file_entry_id) as cnt FROM file_mining_record "
+                "WHERE ne_version_id=? AND mined=1",
+                (ne_version_id,),
+            )
+            total_mined_files = total_mined_rows[0]["cnt"] if total_mined_rows else 0
 
-                    all_candidates.append(cand_id)
+            # Recalculate scores for all affected candidates with correct denominator
+            seen_cand_ids = set()
+            for cand_id, cand_status in all_candidates:
+                if cand_id in seen_cand_ids:
+                    continue
+                seen_cand_ids.add(cand_id)
 
-            # Deduplicate candidate IDs
-            unique_candidate_ids = list(set(all_candidates))
+                await self._recalculate_candidate_scores(cand_id, alg_ver, total_mined_files)
+
+                # If status was 'rejected': reactivate
+                if cand_status == "rejected":
+                    updated_cand = await self.db.query(
+                        "SELECT confidence FROM dependency_candidate WHERE id=?",
+                        (cand_id,),
+                    )
+                    new_confidence = updated_cand[0]["confidence"] if updated_cand else 0.0
+                    new_review_route = self._determine_review_route(new_confidence)
+                    await self.db.execute(
+                        "UPDATE dependency_candidate SET status='pending', review_route=?, "
+                        "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (new_review_route, cand_id),
+                    )
 
             return {
                 "mined_files": len(file_ids),
                 "total_files": len(file_ids),
-                "total_candidates": len(unique_candidate_ids),
-                "candidates": unique_candidate_ids,
+                "total_candidates": len(seen_cand_ids),
+                "candidates": list(seen_cand_ids),
             }
 
         @self.router.post("/files/{file_id}/re-mine")
