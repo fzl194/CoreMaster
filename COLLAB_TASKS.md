@@ -50,11 +50,11 @@
 - 管理员：
 - 计划文档：`docs/plans/2026-04-02-mml-dependency-mining-mvp-impl-plan.md`
 - 交接文档：`docs/handoffs/2026-04-02-dep-mining-mvp-claude-handoff.md`
-- 审查文档：`docs/analysis/2026-04-02-dep-mining-mvp-codex-review.md`；`docs/analysis/2026-04-02-dep-mining-mvp-incremental-requirements-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-v2-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-v3-codex-review.md`
+- 审查文档：`docs/analysis/2026-04-02-dep-mining-mvp-codex-review.md`；`docs/analysis/2026-04-02-dep-mining-mvp-incremental-requirements-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-v2-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-v3-codex-review.md`；`docs/analysis/2026-04-02-incremental-mining-impl-codex-review.md`
 - 修复文档：
 - 管理员文档：
 - 设计参考：`docs/plans/2026-04-01-mml-dependency-mining-design.md`
-- 最新消息序号：`MSG-20260402-115300-codex`
+- 最新消息序号：`MSG-20260402-161500-codex`
 - 备注：MVP 实现已完成，含解析器增强、候选生成引擎、审核队列 API、前端视图
 
 ---
