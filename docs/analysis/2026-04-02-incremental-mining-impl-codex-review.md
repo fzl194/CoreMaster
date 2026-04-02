@@ -182,3 +182,16 @@
   - 管理员前序强调了 evidence 汇总与评分语义的可解释性；本轮修复已收掉对应实现偏差中的阻塞部分。
 - 最终评估
   - 当前实现已收口，可以进入下一阶段验证或使用。
+## 14. 第六轮复审结论（基于当前实现一致性复查）
+- 审查时间：2026-04-03 11:30
+- 审查背景
+  - 本轮不再只核对 `hit_count / support` 修复，而是沿“单文件生成 -> 文件级 contribution -> 候选聚合 -> graph_edge 落库 -> 前端读取”链路重新核查 evidence 与文件维度的一致性。
+- 发现的问题
+  - P1：`re-mine` 在 `graph` / `non_graph` 候选当前算法版本下零 contribution 时，只把 `confidence` 和 `scores_json` 清零，没有同步清空或重算 `evidence_json`。这样会出现“分数为 0，但 evidence 仍保留旧 `hit_count / hit_values / sample_scripts`”的脏状态。位置：`backend/plugins/mml_manager/main.py` `re-mine` 零贡献分支。
+  - P1：已入图谱边 `graph_edge` 的 `evidence_json` 不会随着后续增量挖掘同步更新。当前只在 `accept_candidate()` 时把当时的候选 evidence 写入 `graph_edge`；后续新文件再命中同 key，只会更新 `dependency_candidate` / `candidate_contribution`，不会更新 `graph_edge`。这与“图谱动态构建、证据持续关联”目标不一致。位置：`backend/plugins/mml_manager/main.py` `accept_candidate()` 与 `mine_selected_files()`。
+  - P2：候选级 `dependency_candidate.evidence_json` 已经把文件维度压平。真正区分文件的是 `candidate_contribution(candidate_id, file_entry_id, algorithm_version)`；聚合后 evidence 仅保留总 `hit_count`、`hit_file_count`、`hit_values` 和不带 `file_entry_id` 的 `sample_scripts`，审核页无法知道每条样例来自哪个文件。位置：`backend/plugins/mml_manager/main.py` 聚合重算逻辑。
+  - P2：前端 evidence 契约仍停留在旧模型，类型和展示都未跟上后端。前端还定义 `total_scripts` / `counter_examples`，页面展示仍读取 `selectedCandidate.evidence.total_scripts`，而后端当前实际返回的是 `hit_file_count` / `total_mined_files`。这会导致候选详情语义错误。位置：`frontend/src/api/dependency-mining.ts`、`frontend/src/views/plugins/DependencyMining.vue`。
+- 测试缺口
+  - 现有测试覆盖了 `hit_count` 累加、`support` 分母和部分状态机，但没有覆盖：1）`graph/non_graph` 零 contribution 后 evidence 是否同步清零；2）graph edge 是否随新增 contribution 更新 evidence；3）前端 evidence 契约是否与后端一致。
+- 最终评估
+  - 当前实现不能按“证据一致、文件可追溯、图谱动态更新”口径放行，需要 Claude 继续修正。
