@@ -124,3 +124,19 @@
   - 补一条 `rejected -> accept` 返回 400 的回归测试。
 - 复审结论：
   - 当前实现仍不能闭环，需先修复该剩余 P1。
+
+## 11. 第三轮复审结论（基于 `f257add`）
+
+- 复审对象：`602e7b0..f257add`
+- 复审时间：2026-04-02 18:10
+- 已确认修复：
+  - `accept_candidate()` 已移除 `rejected` 作为允许来源状态，当前只允许 `pending` 及兼容旧数据的 pending-like 遗留状态进入 `graph`。
+  - 返回报错文案已收紧为“只能从 pending 状态接受”。
+  - 已新增 `test_state_machine_rejected_to_graph_blocked`，覆盖 `rejected -> accept` 返回 400 的场景。
+- 验证：
+  - 复查了 `backend/plugins/mml_manager/main.py` 中 `accept_candidate()` 的最终生效代码。
+  - 复查了 `backend/tests/test_dependency_mining.py` 新增的状态机回归测试。
+  - 复跑 `python -m pytest backend/tests/test_dependency_mining.py -q`，结果 `33 passed`。
+- 复审结论：
+  - 上一轮残留的最后一个状态机级 P1 已收口。
+  - 当前实现层面未再发现阻塞闭环的代码级问题。

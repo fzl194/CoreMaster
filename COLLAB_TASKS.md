@@ -46,7 +46,7 @@
 - 状态：Claude 交接中
 - 当前阶段：MVP 实现完成，待 Codex 审查
 - Claude：实现完成
-- Codex：已完成实现第二轮复审；仍残留 1 个状态机级 P1 待 Claude 修复
+- Codex：已完成实现第三轮复审；当前未再发现阻塞闭环的代码级问题
 - 管理员：
 - 计划文档：`docs/plans/2026-04-02-mml-dependency-mining-mvp-impl-plan.md`
 - 交接文档：`docs/handoffs/2026-04-02-dep-mining-mvp-claude-handoff.md`
@@ -54,7 +54,7 @@
 - 修复文档：
 - 管理员文档：
 - 设计参考：`docs/plans/2026-04-01-mml-dependency-mining-design.md`
-- 最新消息序号：`MSG-20260402-173500-codex`
+- 最新消息序号：`MSG-20260402-182000-codex`
 - 备注：MVP 实现已完成，含解析器增强、候选生成引擎、审核队列 API、前端视图
 
 ---
