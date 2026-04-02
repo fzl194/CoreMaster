@@ -931,12 +931,12 @@ class Plugin:
 
             cand = rows[0]
             current = cand["status"]
-            # pending-like states (including legacy auto_passed/llm_review/man_review) can accept
+            # Only pending-like states can accept (rejected must be re-activated to pending via new evidence)
             pending_like = ("pending", "auto_passed", "llm_review", "man_review")
-            if current not in (*pending_like, "rejected"):
+            if current not in pending_like:
                 return JSONResponse(
                     status_code=400,
-                    content={"detail": f"只能从 pending 或 rejected 状态接受，当前: {current}"},
+                    content={"detail": f"只能从 pending 状态接受，当前: {current}"},
                 )
 
             ne_version_id = cand["ne_version_id"]

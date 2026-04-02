@@ -861,3 +861,21 @@ async def test_revert_graph_edge_status_revoked(client):
     # Verify graph_edge status is 'revoked'
     edge_rows = await db.query("SELECT status FROM graph_edge WHERE id=?", (edge_id,))
     assert edge_rows[0]["status"] == "revoked"
+
+
+@pytest.mark.asyncio
+async def test_state_machine_rejected_to_graph_blocked(client):
+    """rejected 不能直接 accept 为 graph（必须通过新证据激活回 pending）。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_SM_R2G", "V_SM_R2G")
+    entries, _ = await _upload_file(client, "sm_r2g.mml", b'ADD VPN: VPN="r2g";\nADD APN: VRFNAME="r2g";', ne_id)
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries[0]["id"]]})
+
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    cand_id = cands[0]["id"]
+
+    # pending → rejected (legal)
+    await client.post(f"{BASE}/candidates/{cand_id}/reject", json={"reviewer": "admin"})
+
+    # rejected → graph (illegal, must be re-activated to pending via new evidence first)
+    resp = await client.post(f"{BASE}/candidates/{cand_id}/accept", json={"reviewer": "admin"})
+    assert resp.status_code == 400
