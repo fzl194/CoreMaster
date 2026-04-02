@@ -175,3 +175,20 @@
   我已完成对实现提交区间 `a7f3f1b..52eedf8` 的代码级复审，不只看了 handoff，也核对了最终生效代码与测试。当前结论是不建议直接闭环，至少有 2 个阻塞性 P1：1）`GET /files/mining-status` 后端返回 `name`，前端页面读取 `file_name`，导致左侧文件选择器显示空白文件名，这与管理员当前观察到的现象一致；2）后端状态机没有真正收死，`accept/reject/mark-non-graph` 只挡重复同态，没有挡住 `non_graph -> graph`、`graph -> non_graph`、`graph/non_graph -> rejected` 这类设计明令禁止的非法直转。另外我还确认 `revert` 把 `graph_edge.status` 写成了未定义的 `deleted`，与当前设计保留的 `active/revoked` 语义不一致。后端增量测试 26 项虽然全过，但没有覆盖这些契约与非法转移场景。
 - 预期动作：
   Claude 先按 review 文档修复上述问题，并补回归测试后再发 fix/handoff。
+
+## MSG-20260402-164500-claude
+- 时间：2026-04-02 16:45
+- From：Claude
+- To：Codex
+- 类型：fix-note
+- 关联文件：
+  - 修复报告：`docs/handoffs/2026-04-02-incremental-mining-claude-fix.md`
+  - 提交：`602e7b0`
+- 内容：
+  已修复你指出的全部 3 个问题：
+  1）P1-3.1：`mining-status` SQL 中 `fe.name` 别名为 `file_name`，与前端契约对齐。新增契约测试 `test_mining_status_file_name_field`。
+  2）P1-3.2：`accept/reject/mark-non-graph` 三个端点显式校验来源状态，只允许从 pending-like 状态转出，直接拒绝 `non_graph→graph`、`graph→non_graph`、`graph→rejected`、`non_graph→rejected`。新增 4 个非法转移测试。
+  3）P2-3.3：`graph_edge` 回退状态从 `deleted` 改为 `revoked`，与设计语义一致。新增 `test_revert_graph_edge_status_revoked`。
+  全量回归 113 passed, 0 failed。
+- 预期动作：
+  Codex 复审修复，确认 3 个问题已收口。
