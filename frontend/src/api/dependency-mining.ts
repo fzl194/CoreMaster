@@ -40,20 +40,29 @@ export interface Candidate {
   scores: CandidateScores;
   evidence: CandidateEvidence;
   graph_edge_id: number | null;
+  review_route: string | null;
+  non_graph_reason: string | null;
+  non_graph_reviewer: string | null;
+  active_algorithm_version: string;
   created_at: string;
   updated_at: string;
 }
 
-// ── API Functions ───────────────────────────────────────────────────────────
-
-export async function batchExtractCommands(
-  neVersionId: number
-): Promise<{ extracted: { file_id: number; file_name: string; instance_count: number }[]; total_files: number; total_instances: number }> {
-  const { data } = await api.post(
-    `/plugins/mml_manager/versions/${neVersionId}/batch-extract`
-  );
-  return data;
+export interface FileMiningStatus {
+  file_entry_id: number;
+  file_name: string;
+  mined: boolean | number;
+  command_count: number;
+  algorithm_version: string;
 }
+
+export interface MineResult {
+  mined_files: number;
+  total_candidates: number;
+  candidates: number[];
+}
+
+// ── API Functions ───────────────────────────────────────────────────────────
 
 export async function extractCommands(
   fileId: number
@@ -61,18 +70,6 @@ export async function extractCommands(
   const { data } = await api.post(
     `/plugins/mml_manager/scripts/${fileId}/extract-commands`
   );
-  return data;
-}
-
-export async function generateCandidates(
-  neVersionId: number
-): Promise<{ candidates: Candidate[]; total: number }> {
-  const { data } = await api.post<{
-    candidates: Candidate[];
-    total: number;
-  }>("/plugins/mml_manager/candidates/generate", {
-    ne_version_id: neVersionId,
-  });
   return data;
 }
 
@@ -106,5 +103,32 @@ export async function rejectCandidate(
     `/plugins/mml_manager/candidates/${id}/reject`,
     { reviewer }
   );
+  return data;
+}
+
+export async function mineFiles(fileIds: number[]): Promise<MineResult> {
+  const { data } = await api.post("/plugins/mml_manager/files/mine", { file_ids: fileIds });
+  return data;
+}
+
+export async function reMineFile(fileId: number): Promise<MineResult> {
+  const { data } = await api.post(`/plugins/mml_manager/files/${fileId}/re-mine`);
+  return data;
+}
+
+export async function fetchMiningStatus(neVersionId: number): Promise<FileMiningStatus[]> {
+  const { data } = await api.get<FileMiningStatus[]>("/plugins/mml_manager/files/mining-status", {
+    params: { ne_version_id: neVersionId },
+  });
+  return data;
+}
+
+export async function markNonGraph(id: number, reason: string, reviewer: string): Promise<{ ok: boolean }> {
+  const { data } = await api.post(`/plugins/mml_manager/candidates/${id}/mark-non-graph`, { reason, reviewer });
+  return data;
+}
+
+export async function revertCandidate(id: number, reviewer: string): Promise<{ ok: boolean }> {
+  const { data } = await api.post(`/plugins/mml_manager/candidates/${id}/revert`, { reviewer });
   return data;
 }

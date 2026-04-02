@@ -3,67 +3,128 @@
     <!-- Header -->
     <n-page-header title="依赖挖掘" subtitle="MML 命令参数依赖关系发现与审核">
       <template #extra>
-        <n-space align="center">
-          <n-select
-            v-model:value="selectedNeVersionId"
-            :options="neVersionOptions"
-            placeholder="选择网元版本"
-            style="width: 280px"
-            @update:value="handleNeVersionChange"
-          />
-          <n-button
-            type="primary"
-            :loading="generating"
-            :disabled="!selectedNeVersionId"
-            @click="handleGenerate"
-          >
-            提取 & 生成
-          </n-button>
-          <n-button :disabled="!selectedNeVersionId" @click="loadCandidates">
-            刷新列表
-          </n-button>
-        </n-space>
+        <n-select
+          v-model:value="selectedNeVersionId"
+          :options="neVersionOptions"
+          placeholder="选择网元版本"
+          style="width: 280px"
+          @update:value="handleNeVersionChange"
+        />
       </template>
     </n-page-header>
 
-    <!-- Stats -->
-    <n-grid :cols="4" :x-gap="12" :y-gap="12" style="margin-top: 16px">
-      <n-gi>
-        <n-card size="small"><n-statistic label="候选总数" :value="candidates.length" /></n-card>
-      </n-gi>
-      <n-gi>
-        <n-card size="small"><n-statistic label="已通过" :value="acceptedCount" /></n-card>
-      </n-gi>
-      <n-gi>
-        <n-card size="small"><n-statistic label="待审核" :value="pendingCount" /></n-card>
-      </n-gi>
-      <n-gi>
-        <n-card size="small"><n-statistic label="已拒绝" :value="rejectedCount" /></n-card>
-      </n-gi>
-    </n-grid>
-
-    <!-- Filter Tags -->
-    <n-space style="margin-top: 16px; margin-bottom: 12px">
-      <n-tag
-        v-for="f in statusFilters"
-        :key="f.value"
-        :type="activeFilter === f.value ? 'primary' : 'default'"
-        style="cursor: pointer"
-        round
-        @click="activeFilter = f.value"
+    <!-- Main Layout: left file list + right tabbed candidates -->
+    <n-layout has-sider style="margin-top: 16px; height: calc(100vh - 180px)">
+      <n-layout-sider
+        bordered
+        :width="340"
+        content-style="padding: 12px;"
+        :native-scrollbar="false"
       >
-        {{ f.label }} ({{ f.value === 'all' ? candidates.length : candidates.filter(c => c.status === f.value).length }})
-      </n-tag>
-    </n-space>
+        <n-space vertical :size="12">
+          <n-space justify="space-between" align="center">
+            <span style="font-weight: 600; font-size: 14px">文件列表</span>
+            <n-space :size="6">
+              <n-button
+                type="primary"
+                size="small"
+                :loading="miningBusy"
+                :disabled="!selectedNeVersionId || checkedFileIds.length === 0"
+                @click="handleMineSelected"
+              >
+                挖掘选中
+              </n-button>
+              <n-button
+                size="small"
+                :loading="miningBusy"
+                :disabled="!selectedNeVersionId || checkedFileIds.length === 0"
+                @click="handleReMineSelected"
+              >
+                重新挖掘
+              </n-button>
+            </n-space>
+          </n-space>
 
-    <!-- Table -->
-    <n-data-table
-      :columns="columns"
-      :data="filteredCandidates"
-      :pagination="{ pageSize: 20 }"
-      :row-key="(row: Candidate) => row.id"
-      striped
-    />
+          <n-checkbox-group v-model:value="checkedFileIds" v-if="fileList.length > 0">
+            <n-space vertical :size="4" style="width: 100%">
+              <div
+                v-for="f in fileList"
+                :key="f.file_entry_id"
+                class="file-row"
+              >
+                <n-checkbox :value="f.file_entry_id" :label="f.file_name" />
+                <n-tag
+                  :type="f.mined ? 'success' : 'default'"
+                  size="small"
+                  round
+                >
+                  {{ f.mined ? '已挖掘' : '未挖掘' }}
+                </n-tag>
+              </div>
+            </n-space>
+          </n-checkbox-group>
+          <n-empty v-else description="请先选择网元版本" style="margin-top: 40px" />
+        </n-space>
+      </n-layout-sider>
+
+      <n-layout-content content-style="padding: 0 16px;">
+        <n-tabs v-model:value="activeTab" type="line" animated style="height: 100%">
+          <!-- Tab 1: Candidate Pool -->
+          <n-tab-pane name="pending" tab="候选池">
+            <n-space :size="12" style="margin-bottom: 12px">
+              <n-card size="small" style="min-width: 120px">
+                <n-statistic label="待审核" :value="pendingCandidates.length" />
+              </n-card>
+              <n-card size="small" style="min-width: 120px">
+                <n-statistic label="已拒绝" :value="rejectedCandidates.length" />
+              </n-card>
+            </n-space>
+            <n-data-table
+              :columns="pendingColumns"
+              :data="pendingOrRejectedCandidates"
+              :pagination="{ pageSize: 15 }"
+              :row-key="(row: Candidate) => row.id"
+              striped
+              size="small"
+            />
+          </n-tab-pane>
+
+          <!-- Tab 2: Graph Library -->
+          <n-tab-pane name="graph" tab="图谱库">
+            <n-space :size="12" style="margin-bottom: 12px">
+              <n-card size="small" style="min-width: 120px">
+                <n-statistic label="图谱条目" :value="graphCandidates.length" />
+              </n-card>
+            </n-space>
+            <n-data-table
+              :columns="graphColumns"
+              :data="graphCandidates"
+              :pagination="{ pageSize: 15 }"
+              :row-key="(row: Candidate) => row.id"
+              striped
+              size="small"
+            />
+          </n-tab-pane>
+
+          <!-- Tab 3: Non-Graph Library -->
+          <n-tab-pane name="non_graph" tab="非图谱库">
+            <n-space :size="12" style="margin-bottom: 12px">
+              <n-card size="small" style="min-width: 120px">
+                <n-statistic label="非图谱条目" :value="nonGraphCandidates.length" />
+              </n-card>
+            </n-space>
+            <n-data-table
+              :columns="nonGraphColumns"
+              :data="nonGraphCandidates"
+              :pagination="{ pageSize: 15 }"
+              :row-key="(row: Candidate) => row.id"
+              striped
+              size="small"
+            />
+          </n-tab-pane>
+        </n-tabs>
+      </n-layout-content>
+    </n-layout>
 
     <!-- Evidence Drawer -->
     <n-drawer v-model:show="showDrawer" :width="520" placement="right">
@@ -77,6 +138,11 @@
             <n-descriptions-item label="置信度">
               <n-tag :type="confidenceType(selectedCandidate.confidence)" round>
                 {{ (selectedCandidate.confidence * 100).toFixed(1) }}%
+              </n-tag>
+            </n-descriptions-item>
+            <n-descriptions-item label="审核路由">
+              <n-tag :type="routeTagType(selectedCandidate.review_route)" round size="small">
+                {{ selectedCandidate.review_route ?? '-' }}
               </n-tag>
             </n-descriptions-item>
             <n-descriptions-item label="状态">{{ selectedCandidate.status }}</n-descriptions-item>
@@ -107,17 +173,23 @@ import { ref, computed, onMounted, h } from "vue";
 import {
   NPageHeader, NSelect, NButton, NSpace, NDataTable, NTag,
   NGrid, NGi, NStatistic, NCard, NDrawer, NDrawerContent,
-  NDescriptions, NDescriptionsItem, NDivider,
+  NDescriptions, NDescriptionsItem, NDivider, NLayout,
+  NLayoutSider, NLayoutContent, NTabs, NTabPane,
+  NCheckbox, NCheckboxGroup, NEmpty,
 } from "naive-ui";
 import type { DataTableColumns } from "naive-ui";
 import { fetchNeVersions, type NeVersion } from "../../api/mml-manager";
 import {
-  generateCandidates as apiGenerate,
   fetchCandidates as apiFetch,
   acceptCandidate as apiAccept,
   rejectCandidate as apiReject,
-  batchExtractCommands as apiBatchExtract,
+  mineFiles as apiMineFiles,
+  reMineFile as apiReMineFile,
+  fetchMiningStatus as apiFetchMiningStatus,
+  markNonGraph as apiMarkNonGraph,
+  revertCandidate as apiRevert,
   type Candidate,
+  type FileMiningStatus,
 } from "../../api/dependency-mining";
 
 // ── State ────────────────────────────────────────────────────────────────
@@ -125,10 +197,12 @@ import {
 const neVersions = ref<NeVersion[]>([]);
 const selectedNeVersionId = ref<number | null>(null);
 const candidates = ref<Candidate[]>([]);
-const generating = ref(false);
+const fileList = ref<FileMiningStatus[]>([]);
+const checkedFileIds = ref<number[]>([]);
+const miningBusy = ref(false);
 const showDrawer = ref(false);
 const selectedCandidate = ref<Candidate | null>(null);
-const activeFilter = ref("all");
+const activeTab = ref("pending");
 
 // ── Computed ─────────────────────────────────────────────────────────────
 
@@ -139,27 +213,19 @@ const neVersionOptions = computed(() =>
   }))
 );
 
-const acceptedCount = computed(() => candidates.value.filter((c) => c.status === "accepted").length);
-const pendingCount = computed(() => candidates.value.filter((c) => c.status !== "accepted" && c.status !== "rejected").length);
-const rejectedCount = computed(() => candidates.value.filter((c) => c.status === "rejected").length);
-
-const filteredCandidates = computed(() => {
-  if (activeFilter.value === "all") return candidates.value;
-  return candidates.value.filter((c) => c.status === activeFilter.value);
-});
+const pendingCandidates = computed(() => candidates.value.filter((c) => c.status === "pending"));
+const rejectedCandidates = computed(() => candidates.value.filter((c) => c.status === "rejected"));
+const pendingOrRejectedCandidates = computed(() =>
+  candidates.value.filter((c) => c.status === "pending" || c.status === "rejected")
+);
+const graphCandidates = computed(() => candidates.value.filter((c) => c.status === "graph"));
+const nonGraphCandidates = computed(() => candidates.value.filter((c) => c.status === "non_graph"));
 
 const drawerTitle = computed(() => {
   if (!selectedCandidate.value) return "";
   const c = selectedCandidate.value;
-  return `${c.ref_command}.${c.ref_param} → ${c.def_command}.${c.def_param}`;
+  return `${c.ref_command}.${c.ref_param} -> ${c.def_command}.${c.def_param}`;
 });
-
-const statusFilters = [
-  { label: "全部", value: "all" },
-  { label: "待审核", value: "pending" },
-  { label: "已通过", value: "accepted" },
-  { label: "已拒绝", value: "rejected" },
-];
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -173,29 +239,31 @@ function pct(v: number): string {
   return `${(v * 100).toFixed(1)}%`;
 }
 
-function statusTag(status: string): { type: "success" | "warning" | "error" | "default"; label: string } {
-  const map: Record<string, { type: "success" | "warning" | "error" | "default"; label: string }> = {
-    auto_passed: { type: "success", label: "高置信度" },
-    llm_review: { type: "warning", label: "LLM审核" },
-    man_review: { type: "error", label: "人工审核" },
-    accepted: { type: "success", label: "已通过" },
-    rejected: { type: "default", label: "已拒绝" },
-    pending: { type: "warning", label: "待审核" },
-  };
-  return map[status] ?? { type: "default" as const, label: status };
+function routeTagType(route: string | null): "success" | "warning" | "error" | "default" {
+  if (route === "auto") return "success";
+  if (route === "llm") return "warning";
+  if (route === "manual") return "error";
+  return "default";
+}
+
+function routeLabel(route: string | null): string {
+  if (route === "auto") return "auto";
+  if (route === "llm") return "LLM";
+  if (route === "manual") return "人工";
+  return route ?? "-";
 }
 
 // ── Table Columns ────────────────────────────────────────────────────────
 
-const columns: DataTableColumns<Candidate> = [
-  { title: "引用命令", key: "ref_command", width: 130 },
-  { title: "引用参数", key: "ref_param", width: 120 },
-  { title: "定义命令", key: "def_command", width: 130 },
-  { title: "定义参数", key: "def_param", width: 120 },
+const pendingColumns: DataTableColumns<Candidate> = [
+  { title: "引用命令", key: "ref_command", width: 120 },
+  { title: "引用参数", key: "ref_param", width: 110 },
+  { title: "定义命令", key: "def_command", width: 120 },
+  { title: "定义参数", key: "def_param", width: 110 },
   {
     title: "置信度",
     key: "confidence",
-    width: 100,
+    width: 90,
     sorter: (a: Candidate, b: Candidate) => a.confidence - b.confidence,
     defaultSortOrder: "descend",
     render(row: Candidate) {
@@ -205,26 +273,43 @@ const columns: DataTableColumns<Candidate> = [
     },
   },
   {
+    title: "审核路由",
+    key: "review_route",
+    width: 90,
+    render(row: Candidate) {
+      return h(NTag, { type: routeTagType(row.review_route), round: true, size: "small" }, () =>
+        routeLabel(row.review_route)
+      );
+    },
+  },
+  {
     title: "状态",
     key: "status",
-    width: 110,
+    width: 80,
     render(row: Candidate) {
-      const info = statusTag(row.status);
-      return h(NTag, { type: info.type, round: true, size: "small" }, () => info.label);
+      const label = row.status === "pending" ? "待审核" : "已拒绝";
+      const type = row.status === "pending" ? "warning" : "default";
+      return h(NTag, { type, round: true, size: "small" }, () => label);
     },
   },
   {
     title: "操作",
     key: "actions",
-    width: 200,
+    width: 240,
     render(row: Candidate) {
       const btns = [
         h(NButton, { size: "small", quaternary: true, onClick: () => openDrawer(row) }, { default: () => "详情" }),
       ];
-      if (row.status !== "accepted" && row.status !== "rejected") {
+      if (row.status === "pending") {
         btns.push(
           h(NButton, { size: "small", type: "success", onClick: () => handleAccept(row) }, { default: () => "通过" }),
           h(NButton, { size: "small", type: "error", onClick: () => handleReject(row) }, { default: () => "拒绝" }),
+          h(NButton, { size: "small", type: "warning", onClick: () => handleMarkNonGraph(row) }, { default: () => "标记非图谱" }),
+        );
+      } else if (row.status === "rejected") {
+        btns.push(
+          h(NButton, { size: "small", type: "success", onClick: () => handleAccept(row) }, { default: () => "通过" }),
+          h(NButton, { size: "small", type: "warning", onClick: () => handleMarkNonGraph(row) }, { default: () => "标记非图谱" }),
         );
       }
       return h(NSpace, { size: 4 }, { default: () => btns });
@@ -232,12 +317,72 @@ const columns: DataTableColumns<Candidate> = [
   },
 ];
 
+const graphColumns: DataTableColumns<Candidate> = [
+  { title: "引用命令", key: "ref_command", width: 120 },
+  { title: "引用参数", key: "ref_param", width: 110 },
+  { title: "定义命令", key: "def_command", width: 120 },
+  { title: "定义参数", key: "def_param", width: 110 },
+  {
+    title: "置信度",
+    key: "confidence",
+    width: 90,
+    render(row: Candidate) {
+      return h(NTag, { type: confidenceType(row.confidence), round: true, size: "small" }, () =>
+        `${(row.confidence * 100).toFixed(1)}%`
+      );
+    },
+  },
+  {
+    title: "操作",
+    key: "actions",
+    width: 150,
+    render(row: Candidate) {
+      return h(NSpace, { size: 4 }, {
+        default: () => [
+          h(NButton, { size: "small", quaternary: true, onClick: () => openDrawer(row) }, { default: () => "详情" }),
+          h(NButton, { size: "small", type: "warning", onClick: () => handleRevert(row) }, { default: () => "回退" }),
+        ],
+      });
+    },
+  },
+];
+
+const nonGraphColumns: DataTableColumns<Candidate> = [
+  { title: "引用命令", key: "ref_command", width: 120 },
+  { title: "引用参数", key: "ref_param", width: 110 },
+  { title: "定义命令", key: "def_command", width: 120 },
+  { title: "定义参数", key: "def_param", width: 110 },
+  {
+    title: "标记原因",
+    key: "non_graph_reason",
+    width: 150,
+    ellipsis: { tooltip: true },
+    render(row: Candidate) {
+      return row.non_graph_reason ?? "-";
+    },
+  },
+  {
+    title: "操作",
+    key: "actions",
+    width: 150,
+    render(row: Candidate) {
+      return h(NSpace, { size: 4 }, {
+        default: () => [
+          h(NButton, { size: "small", quaternary: true, onClick: () => openDrawer(row) }, { default: () => "详情" }),
+          h(NButton, { size: "small", type: "warning", onClick: () => handleRevert(row) }, { default: () => "回退" }),
+        ],
+      });
+    },
+  },
+];
+
 // ── Actions ──────────────────────────────────────────────────────────────
 
 async function handleNeVersionChange(): Promise<void> {
-  if (selectedNeVersionId.value) {
-    await loadCandidates();
-  }
+  if (!selectedNeVersionId.value) return;
+  checkedFileIds.value = [];
+  activeTab.value = "pending";
+  await Promise.all([loadCandidates(), loadFileList()]);
 }
 
 async function loadCandidates(): Promise<void> {
@@ -249,19 +394,41 @@ async function loadCandidates(): Promise<void> {
   }
 }
 
-async function handleGenerate(): Promise<void> {
+async function loadFileList(): Promise<void> {
   if (!selectedNeVersionId.value) return;
-  generating.value = true;
   try {
-    // Step 1: batch-extract command instances from all scripts
-    await apiBatchExtract(selectedNeVersionId.value);
-    // Step 2: generate dependency candidates
-    const result = await apiGenerate(selectedNeVersionId.value);
-    candidates.value = result.candidates;
+    fileList.value = await apiFetchMiningStatus(selectedNeVersionId.value);
   } catch (e) {
-    console.error("Extract & generate failed:", e);
+    console.error("Failed to load mining status:", e);
+  }
+}
+
+async function handleMineSelected(): Promise<void> {
+  if (!selectedNeVersionId.value || checkedFileIds.value.length === 0) return;
+  miningBusy.value = true;
+  try {
+    await apiMineFiles(checkedFileIds.value);
+    await Promise.all([loadCandidates(), loadFileList()]);
+  } catch (e) {
+    console.error("Mine files failed:", e);
   } finally {
-    generating.value = false;
+    miningBusy.value = false;
+  }
+}
+
+async function handleReMineSelected(): Promise<void> {
+  if (!selectedNeVersionId.value || checkedFileIds.value.length === 0) return;
+  miningBusy.value = true;
+  try {
+    // Re-mine each selected file that has already been mined
+    for (const fileId of checkedFileIds.value) {
+      await apiReMineFile(fileId);
+    }
+    await Promise.all([loadCandidates(), loadFileList()]);
+  } catch (e) {
+    console.error("Re-mine failed:", e);
+  } finally {
+    miningBusy.value = false;
   }
 }
 
@@ -288,6 +455,26 @@ async function handleReject(candidate: Candidate): Promise<void> {
   }
 }
 
+async function handleMarkNonGraph(candidate: Candidate): Promise<void> {
+  const reason = window.prompt("标记原因:", "管理员标记");
+  if (!reason) return;
+  try {
+    await apiMarkNonGraph(candidate.id, reason, "admin");
+    await loadCandidates();
+  } catch (e) {
+    console.error("Mark non-graph failed:", e);
+  }
+}
+
+async function handleRevert(candidate: Candidate): Promise<void> {
+  try {
+    await apiRevert(candidate.id, "admin");
+    await loadCandidates();
+  } catch (e) {
+    console.error("Revert failed:", e);
+  }
+}
+
 onMounted(async () => {
   try {
     neVersions.value = await fetchNeVersions();
@@ -299,6 +486,12 @@ onMounted(async () => {
 
 <style scoped>
 .dep-mining-view {
-  max-width: 1400px;
+  max-width: 1600px;
+}
+.file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
 }
 </style>
