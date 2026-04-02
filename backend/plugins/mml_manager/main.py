@@ -137,6 +137,47 @@ class Plugin:
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS file_mining_record (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_entry_id INTEGER NOT NULL UNIQUE,
+                ne_version_id INTEGER NOT NULL,
+                mined INTEGER NOT NULL DEFAULT 0,
+                algorithm_version TEXT NOT NULL DEFAULT 'v1',
+                command_count INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (file_entry_id) REFERENCES file_entry(id)
+            )
+        """)
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS candidate_contribution (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER NOT NULL,
+                file_entry_id INTEGER NOT NULL,
+                algorithm_version TEXT NOT NULL DEFAULT 'v1',
+                evidence_json TEXT NOT NULL DEFAULT '{}',
+                scores_json TEXT NOT NULL DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (candidate_id) REFERENCES dependency_candidate(id),
+                FOREIGN KEY (file_entry_id) REFERENCES file_entry(id),
+                UNIQUE(candidate_id, file_entry_id, algorithm_version)
+            )
+        """)
+
+        # Add new columns to dependency_candidate (idempotent for existing DBs)
+        for _col_sql in [
+            "ALTER TABLE dependency_candidate ADD COLUMN review_route TEXT",
+            "ALTER TABLE dependency_candidate ADD COLUMN non_graph_reason TEXT",
+            "ALTER TABLE dependency_candidate ADD COLUMN non_graph_reviewer TEXT",
+            "ALTER TABLE dependency_candidate ADD COLUMN active_algorithm_version TEXT NOT NULL DEFAULT 'v1'",
+        ]:
+            try:
+                await self.db.execute(_col_sql)
+            except Exception:
+                pass  # Column already exists
+
         await self.db.execute(
             "CREATE INDEX IF NOT EXISTS idx_cmd_inst_file ON command_instance(file_entry_id)"
         )

@@ -435,3 +435,72 @@ async def test_batch_extract_commands(client):
     assert resp.status_code == 200
     candidates = resp.json()["candidates"]
     assert len(candidates) >= 1
+
+
+# ── Schema Tests: Incremental Mining Tables ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_schema_file_mining_record(client):
+    """file_mining_record table exists with correct structure."""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_SCHEMA", "V_SCHEMA")
+    entries, _ = await _upload_file(client, "schema_test.mml", b'ADD VPN: VPN="v1";', ne_id)
+    file_id = entries[0]["id"]
+    db = client._transport.app.state.registry.get(DatabaseService)
+    await db.execute(
+        "INSERT INTO file_mining_record (file_entry_id, ne_version_id, mined, algorithm_version, command_count) "
+        "VALUES (?, ?, 1, 'v1', 2)",
+        (file_id, ne_id),
+    )
+    rows = await db.query("SELECT * FROM file_mining_record WHERE file_entry_id=?", (file_id,))
+    assert len(rows) == 1
+    assert rows[0]["mined"] == 1
+    assert rows[0]["algorithm_version"] == "v1"
+    assert rows[0]["command_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_schema_candidate_contribution(client):
+    """candidate_contribution table exists with correct structure."""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_CONTRIB", "V_CONTRIB")
+    entries, _ = await _upload_file(client, "contrib_test.mml", b'ADD VPN: VPN="v1";', ne_id)
+    file_id = entries[0]["id"]
+    db = client._transport.app.state.registry.get(DatabaseService)
+
+    await db.execute(
+        "INSERT INTO dependency_candidate "
+        "(ne_version_id, ref_command, ref_param, def_command, def_param, status, confidence, "
+        "scores_json, evidence_json, active_algorithm_version) "
+        "VALUES (?, 'ADD APN', 'VRFNAME', 'ADD VPN', 'VPN', 'pending', 0.9, '{}', '{}', 'v1')",
+        (ne_id,),
+    )
+    cand_rows = await db.query("SELECT id FROM dependency_candidate WHERE ne_version_id=?", (ne_id,))
+    cand_id = cand_rows[0]["id"]
+
+    await db.execute(
+        "INSERT INTO candidate_contribution (candidate_id, file_entry_id, algorithm_version, evidence_json, scores_json) "
+        "VALUES (?, ?, 'v1', '{}', '{}')",
+        (cand_id, file_id),
+    )
+    rows = await db.query("SELECT * FROM candidate_contribution WHERE candidate_id=?", (cand_id,))
+    assert len(rows) == 1
+    assert rows[0]["algorithm_version"] == "v1"
+
+
+@pytest.mark.asyncio
+async def test_schema_candidate_new_columns(client):
+    """dependency_candidate has new columns: review_route, non_graph_reason, non_graph_reviewer, active_algorithm_version."""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_COLS", "V_COLS")
+    db = client._transport.app.state.registry.get(DatabaseService)
+    await db.execute(
+        "INSERT INTO dependency_candidate "
+        "(ne_version_id, ref_command, ref_param, def_command, def_param, status, confidence, "
+        "scores_json, evidence_json, review_route, non_graph_reason, non_graph_reviewer, active_algorithm_version) "
+        "VALUES (?, 'ADD APN', 'VRFNAME', 'ADD VPN', 'VPN', 'pending', 0.9, '{}', '{}', 'auto', NULL, NULL, 'v1')",
+        (ne_id,),
+    )
+    rows = await db.query("SELECT * FROM dependency_candidate WHERE ne_version_id=?", (ne_id,))
+    assert len(rows) == 1
+    assert rows[0]["review_route"] == "auto"
+    assert rows[0]["active_algorithm_version"] == "v1"
+    assert rows[0]["non_graph_reason"] is None
