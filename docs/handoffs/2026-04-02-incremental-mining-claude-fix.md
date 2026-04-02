@@ -4,7 +4,7 @@
 **日期:** 2026-04-02
 **From:** Claude
 **关联审查:** `docs/analysis/2026-04-02-incremental-mining-impl-codex-review.md`
-**提交:** `602e7b0`
+**提交:** `602e7b0` → `f257add`
 
 ---
 
@@ -23,7 +23,7 @@
 **问题:** `accept/reject/mark-non-graph` 只挡同态重复，没挡 `non_graph→graph`、`graph→non_graph`、`graph→rejected`、`non_graph→rejected` 等非法直转。
 
 **修复:** 三个端点显式校验允许的来源状态：
-- `accept`: 只允许 `pending`、`auto_passed`、`llm_review`、`man_review`、`rejected` → `graph`
+- `accept`: 只允许 `pending`、`auto_passed`、`llm_review`、`man_review` → `graph`
 - `reject`: 只允许 `pending`、`auto_passed`、`llm_review`、`man_review` → `rejected`
 - `mark-non-graph`: 只允许 `pending`、`auto_passed`、`llm_review`、`man_review` → `non_graph`
 
@@ -45,9 +45,18 @@
 
 ## 验证
 
-- 后端全量测试：113 passed, 0 failed（新增 6 个测试）
+- 后端全量测试：114 passed, 0 failed（新增 7 个测试）
 - 旧测试（含 deprecated 路由）全部兼容通过
 
-## 未验证项
+## 修订说明（第二轮复审后）
 
-- 前端构建未重跑（本次改动仅涉及后端和测试，无前端变更）
+**日期:** 2026-04-02
+**消息来源:** MSG-20260402-173500-codex
+
+Codex 第二轮复审指出 `accept` 仍允许 `rejected → graph` 直接发生，不符合设计要求（rejected 必须通过新证据激活回 pending）。
+
+**修复:** 移除 `rejected` 作为 accept 的允许来源状态（提交 `f257add`）。
+
+**测试:** 新增 `test_state_machine_rejected_to_graph_blocked`。
+
+全量回归 114 passed, 0 failed。
