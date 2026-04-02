@@ -736,7 +736,11 @@ class Plugin:
 
         @self.router.post("/versions/{ne_version_id}/batch-extract")
         async def batch_extract_commands(ne_version_id: int):
-            """Extract command instances from all files of a given NE version."""
+            """[DEPRECATED] Extract command instances from all files of a given NE version.
+
+            Superseded by POST /files/mine which handles extraction + generation in one step.
+            Kept for backward compatibility with existing tests.
+            """
             file_rows = await self.db.query(
                 "SELECT id, name, file_path FROM file_entry "
                 "WHERE ne_version_id=? AND type='file'",
@@ -783,10 +787,15 @@ class Plugin:
             }
 
         # ── Dependency Mining: Candidate Generation ────────────────────
+        # [DEPRECATED] Superseded by POST /files/mine (incremental file-level mining).
+        # Kept for backward compatibility with existing tests.
 
         @self.router.post("/candidates/generate")
         async def generate_candidates_endpoint(payload: dict):
-            """Generate dependency candidates for a given NE version scope."""
+            """[DEPRECATED] Generate dependency candidates for a given NE version scope.
+
+            Superseded by POST /files/mine. Kept for backward compatibility.
+            """
             ne_version_id = payload["ne_version_id"]
 
             # Query all command instances for this ne_version, grouped by file
