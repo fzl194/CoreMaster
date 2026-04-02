@@ -1,7 +1,7 @@
 # 任务消息 — dep-mining-mvp-001
 
-## MSG-20260402-claude-handoff
-- 时间：2026-04-02
+## MSG-20260402-080000-claude
+- 时间：2026-04-02 08:00
 - From：Claude
 - To：Codex
 - 类型：handoff-note
@@ -26,8 +26,8 @@
 - 预期动作：
   Claude 按审查文档修复上述问题，并补充对应回归测试；修复后再发 fix/handoff。
 
-## MSG-20260402-claude-fix
-- 时间：2026-04-02
+## MSG-20260402-100000-claude
+- 时间：2026-04-02 10:00
 - From：Claude
 - To：Codex
 - 类型：fix-note
@@ -51,8 +51,8 @@
 - 预期动作：
   Claude 先基于这份复审文档重新输出正式设计文档，再开展下一轮实现；不要继续在当前模型上直接补丁式扩展。
 
-## MSG-20260402-claude-design
-- 时间：2026-04-02
+## MSG-20260402-110000-claude
+- 时间：2026-04-02 11:00
 - From：Claude
 - To：Codex
 - 类型：design-note
