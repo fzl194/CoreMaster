@@ -1,67 +1,35 @@
 # COLLAB_TASKS
 
-本文档是仓库内协作任务总入口。
-
-使用规则：
-
-- 每个非琐碎任务只保留一条任务记录
-- 所有正式文档路径都挂到对应任务下
-- 当前状态、当前阶段、最新消息序号优先在这里维护
-- 已结束任务可移动到“已完成任务”区，但不要删除历史
-
+閺堫剚鏋冨锝嗘Ц娴犳挸绨遍崘鍛礂娴ｆ粈鎹㈤崝鈩冣偓璇插弳閸欙絻鈧?
+娴ｈ法鏁ょ憴鍕灟閿?
+- 濮ｅ繋閲滈棃鐐垫倷绾板簼鎹㈤崝鈥冲涧娣囨繄鏆€娑撯偓閺夆€叉崲閸斅ゎ唶瑜?- 閹碘偓閺堝顒滃蹇旀瀮濡楋綀鐭惧鍕厴閹稿倸鍩岀€电懓绨叉禒璇插娑?- 瑜版挸澧犻悩鑸碘偓浣碘偓浣哥秼閸撳秹妯佸▓鐐光偓浣规付閺傜増绉烽幁顖氱碍閸欒渹绱崗鍫濇躬鏉╂瑩鍣风紒瀛樺Б
+- 瀹歌尙绮ㄩ弶鐔舵崲閸斺€冲讲缁夎濮╅崚鎵斥偓婊冨嚒鐎瑰本鍨氭禒璇插閳ユ繂灏敍灞肩稻娑撳秷顩﹂崚鐘绘珟閸樺棗褰?
 ---
 
-## 活跃任务模板
-
+## 濞叉槒绌禒璇插濡剝婢?
 ## <task-id>
-- 标题：
-- 级别：
-- 状态：
-- 当前阶段：
-- Claude：
-- Codex：
-- 管理员：
-- 计划文档：
-- 交接文档：
-- 审查文档：
-- 修复文档：
-- 管理员文档：
-- 最新消息序号：
-- 备注：
-
-字段分权：
-
-- Claude 维护：`计划文档`、`交接文档`、`修复文档`
-- Codex 维护：`审查文档`
-- 管理员维护：`状态`、`当前阶段`、`备注`
-- 三方都可维护：自己的责任字段、`最新消息序号`
-
+- 閺嶅洭顣介敍?- 缁狙冨焼閿?- 閻樿埖鈧緤绱?- 瑜版挸澧犻梼鑸殿唽閿?- Claude閿?- Codex閿?- 缁狅紕鎮婇崨姗堢窗
+- 鐠佲€冲灊閺傚洦銆傞敍?- 娴溿倖甯撮弬鍥ㄣ€傞敍?- 鐎光剝鐓￠弬鍥ㄣ€傞敍?- 娣囶喖顦查弬鍥ㄣ€傞敍?- 缁狅紕鎮婇崨妯绘瀮濡楋綇绱?- 閺堚偓閺傜増绉烽幁顖氱碍閸欏嚖绱?- 婢跺洦鏁為敍?
+鐎涙顔岄崚鍡樻綀閿?
+- Claude 缂佸瓨濮㈤敍姝氱拋鈥冲灊閺傚洦銆俙閵嗕梗娴溿倖甯撮弬鍥ㄣ€俙閵嗕梗娣囶喖顦查弬鍥ㄣ€俙
+- Codex 缂佸瓨濮㈤敍姝氱€光剝鐓￠弬鍥ㄣ€俙
+- 缁狅紕鎮婇崨妯兼樊閹躲倧绱癭閻樿埖鈧梗閵嗕梗瑜版挸澧犻梼鑸殿唽`閵嗕梗婢跺洦鏁瀈
+- 娑撳鏌熼柈钘夊讲缂佸瓨濮㈤敍姘冲殰瀹歌京娈戠拹锝勬崲鐎涙顔岄妴涔ｉ張鈧弬鐗堢Х閹垰绨崣绌?
 ---
 
-## 活跃任务
+## 濞叉槒绌禒璇插
 
 ### dep-mining-mvp-001
-- 标题：MML 命令依赖关系挖掘系统 MVP
-- 级别：正式
-- 状态：Claude 交接中
-- 当前阶段：MVP 实现完成，待 Codex 审查
-- Claude：实现完成
-- Codex：已完成实现第三轮复审；当前未再发现阻塞闭环的代码级问题
-- 管理员：
-- 计划文档：`docs/plans/2026-04-02-mml-dependency-mining-mvp-impl-plan.md`
-- 交接文档：`docs/handoffs/2026-04-02-dep-mining-mvp-claude-handoff.md`
-- 审查文档：`docs/analysis/2026-04-02-dep-mining-mvp-codex-review.md`；`docs/analysis/2026-04-02-dep-mining-mvp-incremental-requirements-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-v2-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-v3-codex-review.md`；`docs/analysis/2026-04-02-incremental-mining-impl-codex-review.md`
-- 修复文档：
-- 管理员文档：
-- 设计参考：`docs/plans/2026-04-01-mml-dependency-mining-design.md`
-- 最新消息序号：`MSG-20260402-182000-codex`
-- 备注：MVP 实现已完成，含解析器增强、候选生成引擎、审核队列 API、前端视图
-
+- 閺嶅洭顣介敍姝丮L 閸涙垝鎶ゆ笟婵婄閸忓磭閮撮幐鏍ㄥ涪缁崵绮?MVP
+- 缁狙冨焼閿涙碍顒滃?- 閻樿埖鈧緤绱癈laude 娴溿倖甯存稉?- 瑜版挸澧犻梼鑸殿唽閿涙瓉VP 鐎圭偟骞囩€瑰本鍨氶敍灞界窡 Codex 鐎光剝鐓?- Claude閿涙艾鐤勯悳鏉跨暚閹?- Codex閿涙艾鍑＄€瑰本鍨氱€圭偟骞囩粭顑跨瑏鏉烆喖顦茬€光槄绱辫ぐ鎾冲閺堫亜鍟€閸欐垹骞囬梼璇差敚闂傤厾骞嗛惃鍕敩閻胶楠囬梻顕€顣?- 缁狅紕鎮婇崨姗堢窗
+- 鐠佲€冲灊閺傚洦銆傞敍姝歞ocs/plans/2026-04-02-mml-dependency-mining-mvp-impl-plan.md`
+- 娴溿倖甯撮弬鍥ㄣ€傞敍姝歞ocs/handoffs/2026-04-02-dep-mining-mvp-claude-handoff.md`
+- 鐎光剝鐓￠弬鍥ㄣ€傞敍姝歞ocs/analysis/2026-04-02-dep-mining-mvp-codex-review.md`閿涙矖docs/analysis/2026-04-02-dep-mining-mvp-incremental-requirements-codex-review.md`閿涙矖docs/analysis/2026-04-02-mml-incremental-mining-design-codex-review.md`閿涙矖docs/analysis/2026-04-02-mml-incremental-mining-design-v2-codex-review.md`閿涙矖docs/analysis/2026-04-02-mml-incremental-mining-design-v3-codex-review.md`閿涙矖docs/analysis/2026-04-02-incremental-mining-impl-codex-review.md`
+- 娣囶喖顦查弬鍥ㄣ€傞敍?- 缁狅紕鎮婇崨妯绘瀮濡楋綇绱?- 鐠佹崘顓搁崣鍌濃偓鍐跨窗`docs/plans/2026-04-01-mml-dependency-mining-design.md`
+- 閺堚偓閺傜増绉烽幁顖氱碍閸欏嚖绱癭MSG-20260402-184000-codex`
+- 婢跺洦鏁為敍姝乂P 鐎圭偟骞囧鎻掔暚閹存劧绱濋崥顐バ掗弸鎰珤婢х偛宸遍妴浣糕偓娆撯偓澶屾晸閹存劕绱╅幙搴涒偓浣割吀閺嶆悂妲﹂崚?API閵嗕礁澧犵粩顖濐潒閸?
 ---
 
-## 已完成任务
-
-### 说明
-
-- 可将已闭环任务移动到此区
-- 如任务较多，可后续按月份拆分归档
+## 瀹告彃鐣幋鎰崲閸?
+### 鐠囧瓨妲?
+- 閸欘垰鐨㈠鏌ユ４閻滎垯鎹㈤崝锛勑╅崝銊ュ煂濮濄倕灏?- 婵″倷鎹㈤崝陇绶濇径姘剧礉閸欘垰鎮楃紒顓熷瘻閺堝牅鍞ら幏鍡楀瀻瑜版帗銆?
