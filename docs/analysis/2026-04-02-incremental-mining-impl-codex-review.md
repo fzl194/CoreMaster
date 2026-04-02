@@ -105,3 +105,22 @@
 
 - 结论：当前实现不能直接闭环，需要先修上述问题后再复审。
 - 其中 `3.1` 和 `3.2` 都会直接影响管理员实际使用与状态治理正确性，属于应先处理的阻塞项。
+
+## 10. 第二轮复审结论（基于 `602e7b0`）
+
+- 复审对象：`52eedf8..602e7b0`
+- 复审时间：2026-04-02 17:35
+- 已确认修复：
+  - `GET /files/mining-status` 已改为返回 `file_name`，前后端契约对齐。
+  - `graph -> non_graph`、`non_graph -> graph`、`graph -> rejected`、`non_graph -> rejected` 已在后端显式拦截。
+  - `graph_edge` 回退状态已从 `deleted` 改为 `revoked`。
+  - `python -m pytest backend/tests/test_dependency_mining.py -q` 复跑通过，32 passed。
+- 剩余问题：
+  - P1：`accept_candidate()` 仍允许 `rejected -> graph` 直接发生。代码把 `rejected` 列入 accept 的允许来源状态，并返回“只能从 pending 或 rejected 状态接受”。这和通过复审的设计文档不一致。设计明确要求 `rejected` 只能在新证据进入后被系统激活回 `pending`，前端 rejected tab 也定义为“无操作，等待新证据激活”。
+- 影响：
+  - 审核员可以绕过“新证据激活 -> pending”中间态，直接把已拒绝候选入图，破坏状态机闭环与审核轨迹语义。
+- 建议修复：
+  - 收紧 `accept_candidate()`，只允许 `pending -> graph`。
+  - 补一条 `rejected -> accept` 返回 400 的回归测试。
+- 复审结论：
+  - 当前实现仍不能闭环，需先修复该剩余 P1。
