@@ -190,6 +190,69 @@ def test_generate_candidates_null_values_filtered():
     assert len(candidates) == 0
 
 
+def test_generate_single_file_candidates():
+    import sys
+    plugin_dir = str(Path(__file__).resolve().parent.parent / "plugins" / "mml_manager")
+    if plugin_dir not in sys.path:
+        sys.path.insert(0, plugin_dir)
+    from candidate_engine import generate_single_file_candidates
+
+    script = {
+        "file_entry_id": 42,
+        "ne_version_id": 1,
+        "commands": [
+            {"operation": "ADD", "name": "VPN", "params": [{"name": "VPN", "value": "vpn5g_01"}], "line_number": 1},
+            {"operation": "ADD", "name": "APN", "params": [{"name": "VRFNAME", "value": "vpn5g_01"}], "line_number": 2},
+        ],
+    }
+    results = generate_single_file_candidates(script)
+    assert len(results) == 1
+    r = results[0]
+    assert r["ref_command"] == "ADD APN"
+    assert r["ref_param"] == "VRFNAME"
+    assert r["def_command"] == "ADD VPN"
+    assert r["def_param"] == "VPN"
+    assert r["file_entry_id"] == 42
+    assert "evidence" in r
+    assert "scores" in r
+    assert r["scores"]["confidence"] > 0
+
+
+def test_aggregate_contributions():
+    import sys
+    plugin_dir = str(Path(__file__).resolve().parent.parent / "plugins" / "mml_manager")
+    if plugin_dir not in sys.path:
+        sys.path.insert(0, plugin_dir)
+    from candidate_engine import aggregate_contributions
+
+    contributions = [
+        {
+            "file_entry_id": 1,
+            "has_hit": True,
+            "hit_values": ["vpn1"],
+            "order_consistency": 1.0,
+            "name_relevance": 0.8,
+            "hit_count": 1,
+            "confidence": 0.85,
+            "sample_scripts": [{"def_line": 1, "ref_line": 2}],
+        },
+        {
+            "file_entry_id": 2,
+            "has_hit": True,
+            "hit_values": ["vpn2"],
+            "order_consistency": 1.0,
+            "name_relevance": 0.8,
+            "hit_count": 1,
+            "confidence": 0.82,
+            "sample_scripts": [{"def_line": 1, "ref_line": 3}],
+        },
+    ]
+    result = aggregate_contributions(contributions)
+    assert result["support"] == 1.0  # 2/2 files have hits
+    assert result["confidence"] > 0.5
+    assert result["distinctiveness"] == 1.0  # 2 unique / 2 total
+
+
 def test_name_similarity():
     import sys
     plugin_dir = str(Path(__file__).resolve().parent.parent / "plugins" / "mml_manager")

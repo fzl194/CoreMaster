@@ -184,6 +184,164 @@ def generate_candidates(
     return candidates
 
 
+def generate_single_file_candidates(
+    script: dict,
+    weights: dict | None = None,
+) -> list[dict]:
+    """Generate contribution-level candidates from a single script file.
+
+    This produces per-file contributions that can later be aggregated via
+    ``aggregate_contributions``.  Each result represents what this one file
+    contributes to the candidate pool — *not* a final aggregated candidate.
+
+    Args:
+        script: dict with keys ``file_entry_id``, ``ne_version_id``,
+            ``commands`` (list of command dicts having ``operation``,
+            ``name``, ``params``, ``line_number``).
+        weights: optional scoring weights dict.
+
+    Returns:
+        list of contribution dicts with ``file_entry_id``, ``ne_version_id``,
+        ref/def command/param identifiers, ``evidence``, and ``scores``.
+    """
+    if weights is None:
+        weights = DEFAULT_WEIGHTS
+
+    file_id = script["file_entry_id"]
+    ne_version_id = script["ne_version_id"]
+    commands = script["commands"]
+
+    # Build command identifiers: "ADD APN" format
+    cmd_ids = []
+    for cmd in commands:
+        cmd_key = f"{cmd['operation']} {cmd['name']}"
+        cmd_ids.append((cmd_key, cmd))
+
+    # Find value matches: def before ref (i < j) — same pairing logic as
+    # generate_candidates but scoped to a single file.
+    results: list[dict] = []
+
+    for i in range(len(cmd_ids)):
+        for j in range(i + 1, len(cmd_ids)):
+            def_cmd_key, cmd_i = cmd_ids[i]
+            ref_cmd_key, cmd_j = cmd_ids[j]
+
+            for param_i in cmd_i["params"]:
+                for param_j in cmd_j["params"]:
+                    val_i = param_i.get("value")
+                    val_j = param_j.get("value")
+
+                    # Filter null and empty
+                    if not val_i or not val_j:
+                        continue
+                    if val_i != val_j:
+                        continue
+
+                    key = (ref_cmd_key, param_j["name"], def_cmd_key, param_i["name"])
+
+                    # For single file: support=1.0, distinctiveness=1.0
+                    scores = _calculate_scores(
+                        hit_count=1,
+                        total_scripts=1,
+                        unique_values=1,
+                        values={val_i},
+                        sample_lines=[(cmd_i.get("line_number"), cmd_j.get("line_number"))],
+                        ref_param=param_j["name"],
+                        def_param=param_i["name"],
+                        weights=weights,
+                    )
+
+                    results.append({
+                        "file_entry_id": file_id,
+                        "ne_version_id": ne_version_id,
+                        "ref_command": key[0],
+                        "ref_param": key[1],
+                        "def_command": key[2],
+                        "def_param": key[3],
+                        "evidence": {
+                            "hit_count": 1,
+                            "hit_values": {val_i},
+                            "sample_scripts": [
+                                {
+                                    "def_line": cmd_i.get("line_number"),
+                                    "ref_line": cmd_j.get("line_number"),
+                                }
+                            ],
+                        },
+                        "scores": scores,
+                    })
+
+    return results
+
+
+def aggregate_contributions(
+    contributions: list[dict],
+    weights: dict | None = None,
+) -> dict:
+    """Aggregate per-file contributions into a single scored result.
+
+    Each contribution dict is expected to have the following keys:
+
+    * ``has_hit`` (bool)
+    * ``hit_values`` (list of matched value strings)
+    * ``order_consistency`` (float)
+    * ``name_relevance`` (float)
+    * ``hit_count`` (int)
+    * ``confidence`` (float)
+    * ``sample_scripts`` (list)
+
+    Returns a dict with ``support``, ``distinctiveness``,
+    ``order_consistency``, ``name_relevance`` and ``confidence``.
+    """
+    if weights is None:
+        weights = DEFAULT_WEIGHTS
+
+    if not contributions:
+        return {
+            "support": 0.0,
+            "distinctiveness": 0.0,
+            "order_consistency": 0.0,
+            "name_relevance": 0.0,
+            "confidence": 0.0,
+        }
+
+    total_files = len(contributions)
+    hit_files = sum(1 for c in contributions if c.get("has_hit"))
+
+    # Collect all values across contributions
+    all_values: list[str] = []
+    for c in contributions:
+        all_values.extend(c.get("hit_values", []))
+    unique_values = len(set(all_values))
+    total_values = len(all_values)
+
+    # Mean of per-file metrics
+    order_consistency = (
+        sum(c.get("order_consistency", 0.0) for c in contributions) / total_files
+    )
+    name_relevance = (
+        sum(c.get("name_relevance", 0.0) for c in contributions) / total_files
+    )
+
+    support = hit_files / total_files if total_files > 0 else 0.0
+    distinctiveness = unique_values / total_values if total_values > 0 else 0.0
+
+    confidence = (
+        weights["support"] * support
+        + weights["distinctiveness"] * distinctiveness
+        + weights["order_consistency"] * order_consistency
+        + weights["name_relevance"] * name_relevance
+    )
+
+    return {
+        "support": support,
+        "distinctiveness": distinctiveness,
+        "order_consistency": order_consistency,
+        "name_relevance": name_relevance,
+        "confidence": confidence,
+    }
+
+
 def _calculate_scores(
     hit_count: int,
     total_scripts: int,
