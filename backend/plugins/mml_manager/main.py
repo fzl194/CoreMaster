@@ -17,6 +17,23 @@ if str(_PLUGIN_DIR) not in sys.path:
 MML_STORAGE_ROOT = Path(__file__).resolve().parent.parent.parent / "data" / "mml_files"
 
 
+def _json_serialize_evidence(evidence: dict) -> str:
+    """Serialize evidence dict to JSON, converting sets to sorted lists."""
+    clean = {}
+    for k, v in evidence.items():
+        if isinstance(v, set):
+            clean[k] = sorted(v)
+        elif isinstance(v, list):
+            clean[k] = [
+                {sk: (sorted(sv) if isinstance(sv, set) else sv) for sk, sv in item.items()}
+                if isinstance(item, dict) else item
+                for item in v
+            ]
+        else:
+            clean[k] = v
+    return json.dumps(clean, ensure_ascii=False)
+
+
 def _safe_file_path(file_path: str | None) -> Path | None:
     """校验 file_path 是否位于 MML_STORAGE_ROOT 下，防止路径穿越。
 
@@ -820,11 +837,11 @@ class Plugin:
                     )
                 except Exception:
                     # Unique-key conflict: update scores/evidence but preserve
-                    # human terminal states (accepted / rejected).
+                    # human terminal states (graph / non_graph / rejected).
                     await self.db.execute(
                         "UPDATE dependency_candidate SET "
                         "status = CASE "
-                        "  WHEN status IN ('accepted', 'rejected') THEN status "
+                        "  WHEN status IN ('graph', 'non_graph', 'rejected') THEN status "
                         "  ELSE ? "
                         "END, "
                         "confidence=?, scores_json=?, evidence_json=?, "
@@ -877,7 +894,8 @@ class Plugin:
             rows = await self.db.query(
                 f"SELECT id, ne_version_id, ref_command, ref_param, def_command, def_param, "
                 f"status, confidence, scores_json, evidence_json, "
-                f"graph_edge_id, created_at, updated_at "
+                f"graph_edge_id, review_route, non_graph_reason, non_graph_reviewer, "
+                f"active_algorithm_version, created_at, updated_at "
                 f"FROM dependency_candidate {where} ORDER BY confidence DESC",
                 tuple(params),
             )
@@ -890,12 +908,12 @@ class Plugin:
 
         @self.router.post("/candidates/{candidate_id}/accept")
         async def accept_candidate(candidate_id: int, payload: dict):
-            """Accept a candidate → create graph edge + changelog."""
+            """Accept a candidate → create graph edge + changelog. Status → 'graph'."""
             reviewer = payload.get("reviewer", "anonymous")
 
             rows = await self.db.query(
                 "SELECT id, ne_version_id, ref_command, ref_param, def_command, def_param, "
-                "status, confidence, evidence_json, review_history_json "
+                "status, confidence, scores_json, evidence_json, review_history_json "
                 "FROM dependency_candidate WHERE id=?",
                 (candidate_id,),
             )
@@ -903,7 +921,7 @@ class Plugin:
                 return JSONResponse(status_code=404, content={"detail": "候选记录不存在"})
 
             cand = rows[0]
-            if cand["status"] == "accepted":
+            if cand["status"] == "graph":
                 return JSONResponse(status_code=400, content={"detail": "候选已被接受"})
 
             ne_version_id = cand["ne_version_id"]
@@ -942,14 +960,14 @@ class Plugin:
                 )
                 edge_id = edge_rows[0]["id"] if edge_rows else None
 
-            # Update candidate status
+            # Update candidate status to 'graph', clear review_route
             review_entry = {"action": "accepted", "reviewer": reviewer}
             current_history = json.loads(cand.get("review_history_json") or "[]")
             current_history.append(review_entry)
 
             await self.db.execute(
-                "UPDATE dependency_candidate SET status='accepted', graph_edge_id=?, "
-                "review_history_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                "UPDATE dependency_candidate SET status='graph', graph_edge_id=?, "
+                "review_route=NULL, review_history_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (edge_id, json.dumps(current_history, ensure_ascii=False), candidate_id),
             )
 
@@ -959,7 +977,7 @@ class Plugin:
                 "(dependency_id, candidate_id, change_type, snapshot_after, trigger_type, trigger_id) "
                 "VALUES (?, ?, 'add', ?, 'human', ?)",
                 (edge_id, candidate_id,
-                 json.dumps({"status": "active", "confidence": cand["confidence"]},
+                 json.dumps({"status": "graph", "confidence": cand["confidence"]},
                             ensure_ascii=False),
                  reviewer),
             )
@@ -968,7 +986,7 @@ class Plugin:
 
         @self.router.post("/candidates/{candidate_id}/reject")
         async def reject_candidate(candidate_id: int, payload: dict):
-            """Reject a candidate — no graph edge created."""
+            """Reject a candidate — no graph edge created. Status → 'rejected'."""
             reviewer = payload.get("reviewer", "anonymous")
 
             rows = await self.db.query(
@@ -982,7 +1000,7 @@ class Plugin:
                 return JSONResponse(status_code=400, content={"detail": "候选已被拒绝"})
 
             await self.db.execute(
-                "UPDATE dependency_candidate SET status='rejected', "
+                "UPDATE dependency_candidate SET status='rejected', review_route=NULL, "
                 "updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (candidate_id,),
             )
@@ -998,3 +1016,474 @@ class Plugin:
             )
 
             return {"ok": True, "candidate_id": candidate_id}
+
+        # ── Dependency Mining: Mark Non-Graph ────────────────────────────
+
+        @self.router.post("/candidates/{candidate_id}/mark-non-graph")
+        async def mark_non_graph(candidate_id: int, payload: dict):
+            """Mark a candidate as non-graph dependency."""
+            reason = payload.get("reason", "")
+            reviewer = payload.get("reviewer", "anonymous")
+
+            rows = await self.db.query(
+                "SELECT id, status, review_history_json FROM dependency_candidate WHERE id=?",
+                (candidate_id,),
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"detail": "候选记录不存在"})
+
+            cand = rows[0]
+            if cand["status"] == "non_graph":
+                return JSONResponse(status_code=400, content={"detail": "候选已被标记为非图依赖"})
+
+            # Update status to non_graph, clear review_route
+            review_entry = {"action": "mark_non_graph", "reviewer": reviewer, "reason": reason}
+            current_history = json.loads(cand.get("review_history_json") or "[]")
+            current_history.append(review_entry)
+
+            await self.db.execute(
+                "UPDATE dependency_candidate SET status='non_graph', "
+                "non_graph_reason=?, non_graph_reviewer=?, review_route=NULL, "
+                "review_history_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (reason, reviewer,
+                 json.dumps(current_history, ensure_ascii=False), candidate_id),
+            )
+
+            # Create changelog
+            await self.db.execute(
+                "INSERT INTO graph_changelog "
+                "(candidate_id, change_type, snapshot_after, trigger_type, trigger_id) "
+                "VALUES (?, 'mark_non_graph', ?, 'human', ?)",
+                (candidate_id,
+                 json.dumps({"status": "non_graph", "reason": reason}, ensure_ascii=False),
+                 reviewer),
+            )
+
+            return {"ok": True, "candidate_id": candidate_id}
+
+        # ── Dependency Mining: Revert ────────────────────────────────────
+
+        @self.router.post("/candidates/{candidate_id}/revert")
+        async def revert_candidate(candidate_id: int, payload: dict):
+            """Revert a candidate: graph→pending (delete edge), non_graph→pending."""
+            reviewer = payload.get("reviewer", "anonymous")
+
+            rows = await self.db.query(
+                "SELECT id, ne_version_id, ref_command, ref_param, def_command, def_param, "
+                "status, confidence, graph_edge_id, review_history_json "
+                "FROM dependency_candidate WHERE id=?",
+                (candidate_id,),
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"detail": "候选记录不存在"})
+
+            cand = rows[0]
+            current_status = cand["status"]
+
+            if current_status not in ("graph", "non_graph"):
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": f"只能回退 graph 或 non_graph 状态，当前: {current_status}"},
+                )
+
+            review_entry = {"action": "reverted", "reviewer": reviewer, "from_status": current_status}
+            current_history = json.loads(cand.get("review_history_json") or "[]")
+            current_history.append(review_entry)
+
+            # Determine review_route based on confidence
+            review_route = self._determine_review_route(cand["confidence"])
+
+            if current_status == "graph":
+                # Soft-delete the associated graph_edge (set status='deleted')
+                edge_id = cand.get("graph_edge_id")
+                if edge_id:
+                    await self.db.execute(
+                        "UPDATE graph_edge SET status='deleted', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (edge_id,),
+                    )
+
+                await self.db.execute(
+                    "UPDATE dependency_candidate SET status='pending', graph_edge_id=NULL, "
+                    "review_route=?, review_history_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (review_route, json.dumps(current_history, ensure_ascii=False), candidate_id),
+                )
+
+                # Changelog
+                await self.db.execute(
+                    "INSERT INTO graph_changelog "
+                    "(candidate_id, change_type, snapshot_after, trigger_type, trigger_id) "
+                    "VALUES (?, 'revert', ?, 'human', ?)",
+                    (candidate_id,
+                     json.dumps({"status": "pending", "from": "graph"}, ensure_ascii=False),
+                     reviewer),
+                )
+
+            elif current_status == "non_graph":
+                await self.db.execute(
+                    "UPDATE dependency_candidate SET status='pending', "
+                    "non_graph_reason=NULL, non_graph_reviewer=NULL, review_route=?, "
+                    "review_history_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (review_route, json.dumps(current_history, ensure_ascii=False), candidate_id),
+                )
+
+                # Changelog
+                await self.db.execute(
+                    "INSERT INTO graph_changelog "
+                    "(candidate_id, change_type, snapshot_after, trigger_type, trigger_id) "
+                    "VALUES (?, 'revert', ?, 'human', ?)",
+                    (candidate_id,
+                     json.dumps({"status": "pending", "from": "non_graph"}, ensure_ascii=False),
+                     reviewer),
+                )
+
+            return {"ok": True, "candidate_id": candidate_id}
+
+        # ── Dependency Mining: File-Level Mining ─────────────────────────
+
+        @self.router.post("/files/mine")
+        async def mine_selected_files(payload: dict):
+            """Mine selected files: parse, generate candidates, merge into pool."""
+            file_ids = payload.get("file_ids", [])
+            if not file_ids:
+                return JSONResponse(status_code=400, content={"detail": "file_ids 不能为空"})
+
+            # Validate all files exist and belong to the same ne_version
+            ne_version_id = None
+            for fid in file_ids:
+                rows = await self.db.query(
+                    "SELECT id, ne_version_id FROM file_entry WHERE id=? AND type='file'",
+                    (fid,),
+                )
+                if not rows:
+                    return JSONResponse(
+                        status_code=404,
+                        content={"detail": f"文件 {fid} 不存在"},
+                    )
+                if ne_version_id is None:
+                    ne_version_id = rows[0]["ne_version_id"]
+                elif rows[0]["ne_version_id"] != ne_version_id:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"detail": "所有文件必须属于同一个网元版本"},
+                    )
+
+            if ne_version_id is None:
+                return JSONResponse(status_code=400, content={"detail": "文件未绑定网元版本"})
+
+            # Get algorithm version
+            alg_ver = "v1"
+
+            all_candidates = []
+
+            for file_id in file_ids:
+                # a. Parse file → command instances (delete old first, then re-insert)
+                entry_rows = await self.db.query(
+                    "SELECT id, name, file_path, ne_version_id FROM file_entry "
+                    "WHERE id=? AND type='file'",
+                    (file_id,),
+                )
+                if not entry_rows:
+                    continue
+                entry = entry_rows[0]
+                p = _safe_file_path(entry["file_path"])
+                if p is None or not p.exists():
+                    continue
+                content = p.read_text(encoding="utf-8")
+
+                result = self.parser.parse_text_with_report(content)
+                commands = result["commands"]
+
+                # Delete old command instances and re-insert
+                await self.db.execute(
+                    "DELETE FROM command_instance WHERE file_entry_id=?", (file_id,)
+                )
+                for idx, cmd in enumerate(commands):
+                    params_json = json.dumps(cmd["params"], ensure_ascii=False)
+                    await self.db.execute(
+                        "INSERT INTO command_instance "
+                        "(file_entry_id, ne_version_id, command_index, operation, name, params_json, line_number) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (file_id, ne_version_id, idx, cmd["operation"], cmd["name"],
+                         params_json, cmd["line_number"]),
+                    )
+
+                # b. Generate single-file candidates
+                script = {
+                    "file_entry_id": file_id,
+                    "ne_version_id": ne_version_id,
+                    "commands": commands,
+                }
+                from candidate_engine import generate_single_file_candidates
+                local_candidates = generate_single_file_candidates(script)
+
+                # c. Update file_mining_record
+                await self.db.execute(
+                    "INSERT INTO file_mining_record (file_entry_id, ne_version_id, mined, algorithm_version, command_count) "
+                    "VALUES (?, ?, 1, ?, ?) "
+                    "ON CONFLICT(file_entry_id) DO UPDATE SET "
+                    "mined=1, algorithm_version=?, command_count=?, updated_at=CURRENT_TIMESTAMP",
+                    (file_id, ne_version_id, alg_ver, len(commands), alg_ver, len(commands)),
+                )
+
+                # d. Merge each local candidate into pool
+                for lc in local_candidates:
+                    cand_key = (
+                        lc["ref_command"], lc["ref_param"],
+                        lc["def_command"], lc["def_param"],
+                    )
+                    confidence = lc["scores"]["confidence"]
+
+                    # Find existing candidate
+                    existing = await self.db.query(
+                        "SELECT id, status, confidence, active_algorithm_version FROM dependency_candidate "
+                        "WHERE ne_version_id=? AND ref_command=? AND ref_param=? "
+                        "AND def_command=? AND def_param=?",
+                        (ne_version_id, *cand_key),
+                    )
+
+                    if not existing:
+                        # Create new candidate
+                        review_route = self._determine_review_route(confidence)
+                        scores_json = json.dumps(lc["scores"], ensure_ascii=False)
+                        evidence_json = _json_serialize_evidence(lc["evidence"])
+
+                        await self.db.execute(
+                            "INSERT INTO dependency_candidate "
+                            "(ne_version_id, ref_command, ref_param, def_command, def_param, "
+                            "status, confidence, scores_json, evidence_json, "
+                            "review_route, active_algorithm_version) "
+                            "VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
+                            (ne_version_id, *cand_key, confidence,
+                             scores_json, evidence_json, review_route, alg_ver),
+                        )
+                        existing = await self.db.query(
+                            "SELECT id, status, active_algorithm_version FROM dependency_candidate "
+                            "WHERE ne_version_id=? AND ref_command=? AND ref_param=? "
+                            "AND def_command=? AND def_param=?",
+                            (ne_version_id, *cand_key),
+                        )
+
+                    cand_row = existing[0]
+                    cand_id = cand_row["id"]
+                    cand_status = cand_row["status"]
+
+                    # UPSERT contribution
+                    contrib_evidence = _json_serialize_evidence(lc["evidence"])
+                    contrib_scores = json.dumps(lc["scores"], ensure_ascii=False)
+                    await self.db.execute(
+                        "INSERT INTO candidate_contribution "
+                        "(candidate_id, file_entry_id, algorithm_version, evidence_json, scores_json) "
+                        "VALUES (?, ?, ?, ?, ?) "
+                        "ON CONFLICT(candidate_id, file_entry_id, algorithm_version) DO UPDATE SET "
+                        "evidence_json=?, scores_json=?, updated_at=CURRENT_TIMESTAMP",
+                        (cand_id, file_id, alg_ver, contrib_evidence, contrib_scores,
+                         contrib_evidence, contrib_scores),
+                    )
+
+                    # Recalculate aggregated scores
+                    await self._recalculate_candidate_scores(cand_id, alg_ver)
+
+                    # If status was 'rejected': reactivate
+                    if cand_status == "rejected":
+                        # Re-fetch confidence after recalculation
+                        updated_cand = await self.db.query(
+                            "SELECT confidence FROM dependency_candidate WHERE id=?",
+                            (cand_id,),
+                        )
+                        new_confidence = updated_cand[0]["confidence"] if updated_cand else confidence
+                        new_review_route = self._determine_review_route(new_confidence)
+                        await self.db.execute(
+                            "UPDATE dependency_candidate SET status='pending', review_route=?, "
+                            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                            (new_review_route, cand_id),
+                        )
+
+                    all_candidates.append(cand_id)
+
+            # Deduplicate candidate IDs
+            unique_candidate_ids = list(set(all_candidates))
+
+            return {
+                "mined_files": len(file_ids),
+                "total_files": len(file_ids),
+                "total_candidates": len(unique_candidate_ids),
+                "candidates": unique_candidate_ids,
+            }
+
+        @self.router.post("/files/{file_id}/re-mine")
+        async def re_mine_file(file_id: int):
+            """Re-mine a single file: remove old contributions, recalculate, then re-mine."""
+            # Verify file exists
+            rows = await self.db.query(
+                "SELECT id, ne_version_id FROM file_entry WHERE id=? AND type='file'",
+                (file_id,),
+            )
+            if not rows:
+                return JSONResponse(status_code=404, content={"detail": "文件不存在"})
+            ne_version_id = rows[0]["ne_version_id"]
+            if not ne_version_id:
+                return JSONResponse(status_code=400, content={"detail": "文件未绑定网元版本"})
+
+            # Get current algorithm version from file_mining_record, default 'v1'
+            fmr_rows = await self.db.query(
+                "SELECT algorithm_version FROM file_mining_record WHERE file_entry_id=?",
+                (file_id,),
+            )
+            alg_ver = fmr_rows[0]["algorithm_version"] if fmr_rows else "v1"
+
+            # Step 1: Find candidates affected by this file's contributions
+            affected_contribs = await self.db.query(
+                "SELECT candidate_id FROM candidate_contribution "
+                "WHERE file_entry_id=? AND algorithm_version=?",
+                (file_id, alg_ver),
+            )
+            affected_cand_ids = list(set(c["candidate_id"] for c in affected_contribs))
+
+            # Step 2: Delete this file's contributions for current algorithm version
+            await self.db.execute(
+                "DELETE FROM candidate_contribution "
+                "WHERE file_entry_id=? AND algorithm_version=?",
+                (file_id, alg_ver),
+            )
+
+            # Step 3: Recalculate affected candidates' scores and handle zero-contribution
+            for cand_id in affected_cand_ids:
+                cand_rows = await self.db.query(
+                    "SELECT id, status FROM dependency_candidate WHERE id=?",
+                    (cand_id,),
+                )
+                if not cand_rows:
+                    continue
+                cand_status = cand_rows[0]["status"]
+
+                # Count remaining contributions for active_algorithm_version
+                remaining = await self.db.query(
+                    "SELECT COUNT(*) as cnt FROM candidate_contribution "
+                    "WHERE candidate_id=? AND algorithm_version=?",
+                    (cand_id, alg_ver),
+                )
+                contrib_count = remaining[0]["cnt"] if remaining else 0
+
+                if contrib_count == 0:
+                    # graph/non_graph with zero contributions: KEEP, set scores to zero
+                    if cand_status in ("graph", "non_graph"):
+                        zero_scores = json.dumps({
+                            "support": 0.0, "distinctiveness": 0.0,
+                            "order_consistency": 0.0, "name_relevance": 0.0,
+                        }, ensure_ascii=False)
+                        await self.db.execute(
+                            "UPDATE dependency_candidate SET confidence=0.0, scores_json=?, "
+                            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                            (zero_scores, cand_id),
+                        )
+                    elif cand_status in ("pending", "rejected"):
+                        # Delete zero-contribution candidates only if pending/rejected
+                        await self.db.execute(
+                            "DELETE FROM dependency_candidate WHERE id=?", (cand_id,)
+                        )
+                        continue
+                else:
+                    # Recalculate scores
+                    await self._recalculate_candidate_scores(cand_id, alg_ver)
+
+            # Step 4: Re-execute mine logic for this single file
+            resp = await mine_selected_files({"file_ids": [file_id]})
+            if isinstance(resp, JSONResponse):
+                return resp
+            return resp
+
+        @self.router.get("/files/mining-status")
+        async def get_mining_status(ne_version_id: int = Query(...)):
+            """Query file mining status for an NE version."""
+            rows = await self.db.query(
+                "SELECT fe.id as file_entry_id, fe.name, fe.file_size, fe.ne_version_id, "
+                "fmr.mined, fmr.algorithm_version, fmr.command_count, "
+                "fmr.created_at as mined_at "
+                "FROM file_entry fe "
+                "LEFT JOIN file_mining_record fmr ON fe.id = fmr.file_entry_id "
+                "WHERE fe.ne_version_id=? AND fe.type='file' "
+                "ORDER BY fe.name",
+                (ne_version_id,),
+            )
+            return rows
+
+    # ── Helper Methods ────────────────────────────────────────────────
+
+    @staticmethod
+    def _determine_review_route(confidence: float) -> str:
+        """Determine review route based on confidence score."""
+        if confidence >= 0.85:
+            return "auto"
+        elif confidence >= 0.50:
+            return "llm"
+        else:
+            return "manual"
+
+    async def _recalculate_candidate_scores(self, cand_id: int, alg_ver: str):
+        """Recalculate aggregated scores for a candidate from its contributions."""
+        from candidate_engine import aggregate_contributions
+
+        contribs = await self.db.query(
+            "SELECT scores_json, evidence_json FROM candidate_contribution "
+            "WHERE candidate_id=? AND algorithm_version=?",
+            (cand_id, alg_ver),
+        )
+
+        if not contribs:
+            return
+
+        # Build contribution list for aggregation
+        contrib_list = []
+        all_evidence = []
+        for c in contribs:
+            scores = json.loads(c["scores_json"])
+            evidence = json.loads(c["evidence_json"])
+            contrib_list.append({
+                "has_hit": True,
+                "hit_values": evidence.get("hit_values", []),
+                "order_consistency": scores.get("order_consistency", 0.0),
+                "name_relevance": scores.get("name_relevance", 0.0),
+                "hit_count": evidence.get("hit_count", 0),
+                "confidence": scores.get("confidence", 0.0),
+                "sample_scripts": evidence.get("sample_scripts", []),
+            })
+            all_evidence.append(evidence)
+
+        aggregated = aggregate_contributions(contrib_list)
+
+        # Collect all hit values across contributions for evidence
+        all_values = set()
+        for ev in all_evidence:
+            vals = ev.get("hit_values", [])
+            if isinstance(vals, (list, set)):
+                all_values.update(vals)
+            elif isinstance(vals, str):
+                all_values.add(vals)
+
+        all_scripts = []
+        for ev in all_evidence:
+            for s in ev.get("sample_scripts", []):
+                all_scripts.append(s)
+
+        new_evidence = {
+            "hit_count": len(contribs),
+            "total_scripts": len(contribs),
+            "hit_values": sorted(all_values),
+            "sample_scripts": all_scripts[:10],
+        }
+
+        new_scores = {
+            "support": aggregated["support"],
+            "distinctiveness": aggregated["distinctiveness"],
+            "order_consistency": aggregated["order_consistency"],
+            "name_relevance": aggregated["name_relevance"],
+        }
+
+        await self.db.execute(
+            "UPDATE dependency_candidate SET confidence=?, scores_json=?, evidence_json=?, "
+            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (aggregated["confidence"],
+             json.dumps(new_scores, ensure_ascii=False),
+             json.dumps(new_evidence, ensure_ascii=False),
+             cand_id),
+        )

@@ -403,15 +403,15 @@ async def test_full_pipeline(client):
     edge_id = resp.json()["graph_edge_id"]
     assert edge_id is not None
 
-    # Verify candidate is now accepted
-    resp = await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id, "status": "accepted"})
-    accepted = resp.json()
-    assert any(c["id"] == candidate_id for c in accepted)
+    # Verify candidate is now graph
+    resp = await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id, "status": "graph"})
+    graph_cands = resp.json()
+    assert any(c["id"] == candidate_id for c in graph_cands)
 
 
 @pytest.mark.asyncio
-async def test_regenerate_preserves_accepted_status(client):
-    """Generate → Accept → Regenerate: accepted status must NOT be overwritten."""
+async def test_regenerate_preserves_graph_status(client):
+    """Generate → Accept → Regenerate: graph status must NOT be overwritten."""
     ne_id, _ = await _create_ne_version(client, "huawei", "UPF_REGEN", "V100R500")
     scripts = [
         b'ADD VPN: VPN="vpn_regen1";\nADD APN: VRFNAME="vpn_regen1";\n',
@@ -433,13 +433,13 @@ async def test_regenerate_preserves_accepted_status(client):
     )
     assert resp.status_code == 200
 
-    # Regenerate — accepted status must be preserved
+    # Regenerate — graph status must be preserved
     resp = await client.post(f"{BASE}/candidates/generate", json={"ne_version_id": ne_id})
     assert resp.status_code == 200
     regenerated = resp.json()["candidates"]
     match = [c for c in regenerated if c["id"] == candidate_id]
     assert len(match) == 1
-    assert match[0]["status"] == "accepted"
+    assert match[0]["status"] == "graph"
 
 
 @pytest.mark.asyncio
@@ -567,3 +567,182 @@ async def test_schema_candidate_new_columns(client):
     assert rows[0]["review_route"] == "auto"
     assert rows[0]["active_algorithm_version"] == "v1"
     assert rows[0]["non_graph_reason"] is None
+
+
+# ── Incremental Mining API Tests ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_mine_selected_files(client):
+    """Mine selected files, producing candidates with contributions."""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_MINE", "V_MINE")
+    scripts = [
+        b'ADD VPN: VPN="vpn_m1";\nADD APN: VRFNAME="vpn_m1";\n',
+        b'ADD VPN: VPN="vpn_m2";\nADD APN: VRFNAME="vpn_m2";\n',
+    ]
+    file_ids = []
+    for i, content in enumerate(scripts):
+        entries, _ = await _upload_file(client, f"mine_{i}.mml", content, ne_id)
+        file_ids.append(entries[0]["id"])
+    resp = await client.post(f"{BASE}/files/mine", json={"file_ids": file_ids})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_files"] == 2
+    assert data["total_candidates"] >= 1
+    # Verify file_mining_record
+    db = client._transport.app.state.registry.get(DatabaseService)
+    for fid in file_ids:
+        rows = await db.query("SELECT mined, command_count FROM file_mining_record WHERE file_entry_id=?", (fid,))
+        assert len(rows) == 1
+        assert rows[0]["mined"] == 1
+    # Verify candidate pool
+    resp = await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})
+    candidates = resp.json()
+    assert len(candidates) >= 1
+    match = [c for c in candidates if c["ref_param"] == "VRFNAME"]
+    assert len(match) == 1
+    assert match[0]["status"] == "pending"
+    # Verify contributions
+    cand_id = match[0]["id"]
+    contribs = await db.query("SELECT * FROM candidate_contribution WHERE candidate_id=?", (cand_id,))
+    assert len(contribs) == 2
+
+
+@pytest.mark.asyncio
+async def test_remine_file(client):
+    """Re-mine file: old contribution replaced, not duplicated."""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_REMINE", "V_REMINE")
+    entries, _ = await _upload_file(client, "remine.mml", b'ADD VPN: VPN="old";\nADD APN: VRFNAME="old";', ne_id)
+    file_id = entries[0]["id"]
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [file_id]})
+    resp = await client.post(f"{BASE}/files/{file_id}/re-mine")
+    assert resp.status_code == 200
+    db = client._transport.app.state.registry.get(DatabaseService)
+    cands = await db.query("SELECT id FROM dependency_candidate WHERE ne_version_id=?", (ne_id,))
+    assert len(cands) == 1
+    contribs = await db.query("SELECT * FROM candidate_contribution WHERE candidate_id=?", (cands[0]["id"],))
+    assert len(contribs) == 1  # Not 2
+
+
+@pytest.mark.asyncio
+async def test_remine_preserves_graph(client):
+    """Re-mine doesn't delete graph status even with zero contributions."""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_REMINE_G", "V_REMINE_G")
+    entries1, _ = await _upload_file(client, "remg_1.mml", b'ADD VPN: VPN="vg";\nADD APN: VRFNAME="vg";', ne_id)
+    fid1 = entries1[0]["id"]
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [fid1]})
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id, "status": "pending"})).json()
+    cand_id = cands[0]["id"]
+    await client.post(f"{BASE}/candidates/{cand_id}/accept", json={"reviewer": "admin"})
+    resp = await client.post(f"{BASE}/files/{fid1}/re-mine")
+    assert resp.status_code == 200
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    graph_cands = [c for c in cands if c["status"] == "graph"]
+    assert len(graph_cands) == 1
+
+
+@pytest.mark.asyncio
+async def test_mining_status(client):
+    """Query file mining status."""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_MSTATUS", "V_MSTATUS")
+    entries1, _ = await _upload_file(client, "ms_1.mml", b'ADD VPN: VPN="v1";', ne_id)
+    entries2, _ = await _upload_file(client, "ms_2.mml", b'ADD APN: APN="a1";', ne_id)
+    resp = await client.get(f"{BASE}/files/mining-status", params={"ne_version_id": ne_id})
+    assert resp.status_code == 200
+    status_list = resp.json()
+    assert len(status_list) == 2
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries1[0]["id"]]})
+    resp = await client.get(f"{BASE}/files/mining-status", params={"ne_version_id": ne_id})
+    status_list = resp.json()
+    mined = [s for s in status_list if s["file_entry_id"] == entries1[0]["id"]]
+    assert mined[0]["mined"] == 1
+
+
+@pytest.mark.asyncio
+async def test_mark_non_graph(client):
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_NG", "V_NG")
+    entries, _ = await _upload_file(client, "ng.mml", b'ADD VPN: VPN="ng1";\nADD APN: VRFNAME="ng1";', ne_id)
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries[0]["id"]]})
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    cand_id = cands[0]["id"]
+    resp = await client.post(f"{BASE}/candidates/{cand_id}/mark-non-graph", json={
+        "reason": "不可能", "reviewer": "expert",
+    })
+    assert resp.status_code == 200
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    assert cands[0]["status"] == "non_graph"
+    assert cands[0]["non_graph_reason"] == "不可能"
+
+
+@pytest.mark.asyncio
+async def test_revert_graph_to_pending(client):
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_REV_G", "V_REV_G")
+    entries, _ = await _upload_file(client, "revg.mml", b'ADD VPN: VPN="revg";\nADD APN: VRFNAME="revg";', ne_id)
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries[0]["id"]]})
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    cand_id = cands[0]["id"]
+    await client.post(f"{BASE}/candidates/{cand_id}/accept", json={"reviewer": "admin"})
+    resp = await client.post(f"{BASE}/candidates/{cand_id}/revert", json={"reviewer": "admin"})
+    assert resp.status_code == 200
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    assert cands[0]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_revert_non_graph_to_pending(client):
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_REV_NG", "V_REV_NG")
+    entries, _ = await _upload_file(client, "revng.mml", b'ADD VPN: VPN="revng";\nADD APN: VRFNAME="revng";', ne_id)
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries[0]["id"]]})
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    cand_id = cands[0]["id"]
+    await client.post(f"{BASE}/candidates/{cand_id}/mark-non-graph", json={"reason": "test", "reviewer": "admin"})
+    await client.post(f"{BASE}/candidates/{cand_id}/revert", json={"reviewer": "admin"})
+    resp = await client.post(f"{BASE}/candidates/{cand_id}/accept", json={"reviewer": "admin"})
+    assert resp.status_code == 200
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    assert cands[0]["status"] == "graph"
+
+
+@pytest.mark.asyncio
+async def test_full_incremental_pipeline(client):
+    """Full incremental mining pipeline."""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_E2E2", "V_E2E2")
+    files = []
+    for i, content in enumerate([
+        b'ADD VPN: VPN="e2e_v1";\nADD APN: VRFNAME="e2e_v1";',
+        b'ADD VPN: VPN="e2e_v2";\nADD APN: VRFNAME="e2e_v2";',
+        b'ADD VPN: VPN="e2e_v3";\nADD APN: VRFNAME="e2e_v3";',
+    ]):
+        entries, _ = await _upload_file(client, f"e2e2_{i}.mml", content, ne_id)
+        files.append(entries[0]["id"])
+
+    # Mine first 2 files
+    resp = await client.post(f"{BASE}/files/mine", json={"file_ids": files[:2]})
+    assert resp.status_code == 200
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    assert len(cands) == 1
+    cand = cands[0]
+    assert cand["status"] == "pending"
+    db = client._transport.app.state.registry.get(DatabaseService)
+    contribs = await db.query("SELECT COUNT(*) as cnt FROM candidate_contribution WHERE candidate_id=?", (cand["id"],))
+    assert contribs[0]["cnt"] == 2
+
+    # Accept -> graph
+    await client.post(f"{BASE}/candidates/{cand['id']}/accept", json={"reviewer": "admin"})
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    assert cands[0]["status"] == "graph"
+
+    # Mine 3rd file - graph stays, contribution added
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [files[2]]})
+    contribs = await db.query("SELECT COUNT(*) as cnt FROM candidate_contribution WHERE candidate_id=?", (cand["id"],))
+    assert contribs[0]["cnt"] == 3
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    assert cands[0]["status"] == "graph"
+
+    # Revert -> pending -> mark non_graph -> revert -> accept (full cycle)
+    await client.post(f"{BASE}/candidates/{cand['id']}/revert", json={"reviewer": "admin"})
+    await client.post(f"{BASE}/candidates/{cand['id']}/mark-non-graph", json={"reason": "test", "reviewer": "admin"})
+    await client.post(f"{BASE}/candidates/{cand['id']}/revert", json={"reviewer": "admin"})
+    await client.post(f"{BASE}/candidates/{cand['id']}/accept", json={"reviewer": "admin"})
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    assert cands[0]["status"] == "graph"
