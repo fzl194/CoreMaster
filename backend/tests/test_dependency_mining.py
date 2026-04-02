@@ -190,6 +190,103 @@ def test_generate_candidates_null_values_filtered():
     assert len(candidates) == 0
 
 
+def test_no_self_referential_candidates():
+    """Self-referential candidates (same command + same param) must be filtered out."""
+    import sys
+    plugin_dir = str(Path(__file__).resolve().parent.parent / "plugins" / "mml_manager")
+    if plugin_dir not in sys.path:
+        sys.path.insert(0, plugin_dir)
+    from candidate_engine import generate_candidates, generate_single_file_candidates
+
+    # Two ADD APN commands with same APNNAME value — should NOT produce self-loop
+    scripts = [
+        {
+            "file_entry_id": 1,
+            "ne_version_id": 1,
+            "commands": [
+                {"operation": "ADD", "name": "APN", "params": [{"name": "APNNAME", "value": "apn1"}], "line_number": 1},
+                {"operation": "ADD", "name": "APN", "params": [{"name": "APNNAME", "value": "apn1"}], "line_number": 2},
+            ]
+        },
+    ]
+
+    candidates = generate_candidates(scripts)
+    for c in candidates:
+        assert not (c["ref_command"] == c["def_command"] and c["ref_param"] == c["def_param"]), \
+            f"Self-referential candidate found: {c['ref_command']}/{c['ref_param']} -> {c['def_command']}/{c['def_param']}"
+
+    # Also test generate_single_file_candidates
+    results = generate_single_file_candidates(scripts[0])
+    for r in results:
+        assert not (r["ref_command"] == r["def_command"] and r["ref_param"] == r["def_param"]), \
+            f"Self-referential contribution found: {r['ref_command']}/{r['ref_param']} -> {r['def_command']}/{r['def_param']}"
+
+
+def test_single_file_multiple_hits_accumulated():
+    """同一文件内同 key 多次命中，evidence 应累加而非覆盖。"""
+    import sys
+    plugin_dir = str(Path(__file__).resolve().parent.parent / "plugins" / "mml_manager")
+    if plugin_dir not in sys.path:
+        sys.path.insert(0, plugin_dir)
+    from candidate_engine import generate_single_file_candidates
+
+    # 1 APN + 4 VPNINST commands, all sharing VPN value
+    script = {
+        "file_entry_id": 1,
+        "ne_version_id": 1,
+        "commands": [
+            {"operation": "ADD", "name": "APN", "params": [{"name": "VPN", "value": "vpn1"}], "line_number": 1},
+            {"operation": "ADD", "name": "VPNINST", "params": [{"name": "VRFNAME", "value": "vpn1"}], "line_number": 2},
+            {"operation": "ADD", "name": "VPNINST", "params": [{"name": "VRFNAME", "value": "vpn1"}], "line_number": 3},
+            {"operation": "ADD", "name": "VPNINST", "params": [{"name": "VRFNAME", "value": "vpn1"}], "line_number": 4},
+            {"operation": "ADD", "name": "VPNINST", "params": [{"name": "VRFNAME", "value": "vpn1"}], "line_number": 5},
+        ],
+    }
+    results = generate_single_file_candidates(script)
+    # Should produce exactly 1 result: ADD VPNINST/VRFNAME -> ADD APN/VPN
+    assert len(results) == 1
+    r = results[0]
+    assert r["ref_command"] == "ADD VPNINST"
+    assert r["ref_param"] == "VRFNAME"
+    assert r["def_command"] == "ADD APN"
+    assert r["def_param"] == "VPN"
+    # 4 hits (APN at line 1 matched by 4 VPNINST at lines 2-5)
+    assert r["evidence"]["hit_count"] == 4
+    assert len(r["evidence"]["sample_scripts"]) == 4
+
+
+def test_single_file_multiple_hit_values():
+    """同一文件内同 key 匹配不同值，hit_values 应包含所有唯一值。"""
+    import sys
+    plugin_dir = str(Path(__file__).resolve().parent.parent / "plugins" / "mml_manager")
+    if plugin_dir not in sys.path:
+        sys.path.insert(0, plugin_dir)
+    from candidate_engine import generate_single_file_candidates
+
+    script = {
+        "file_entry_id": 1,
+        "ne_version_id": 1,
+        "commands": [
+            {"operation": "ADD", "name": "VPN", "params": [{"name": "VPN", "value": "v1"}], "line_number": 1},
+            {"operation": "ADD", "name": "APN", "params": [{"name": "VRFNAME", "value": "v1"}], "line_number": 2},
+            {"operation": "ADD", "name": "VPN", "params": [{"name": "VPN", "value": "v2"}], "line_number": 3},
+            {"operation": "ADD", "name": "APN", "params": [{"name": "VRFNAME", "value": "v2"}], "line_number": 4},
+        ],
+    }
+    results = generate_single_file_candidates(script)
+    # One key: ADD APN/VRFNAME -> ADD VPN/VPN
+    assert len(results) == 1
+    r = results[0]
+    # 4 hits (v1: VPN@1→APN@2 + VPN@1→APN@4 + VPN@3→APN@4; v2: VPN@3→APN@4)
+    # Actually: (i=0,j=1):v1, (i=0,j=3):v2, (i=2,j=3):v2 — but (i=0,j=3) match v1!=v2 skip
+    # So: (0,1) v1 match, (2,3) v2 match — wait, also (0,3): VPN.v1 vs APN.v2 no match
+    # And (0,1): VPN.v1 vs APN.v1 match, (2,3): VPN.v2 vs APN.v2 match
+    # Total 2 hits, values {v1, v2}
+    assert r["evidence"]["hit_count"] >= 2
+    assert "v1" in r["evidence"]["hit_values"]
+    assert "v2" in r["evidence"]["hit_values"]
+
+
 def test_generate_single_file_candidates():
     import sys
     plugin_dir = str(Path(__file__).resolve().parent.parent / "plugins" / "mml_manager")
@@ -879,3 +976,57 @@ async def test_state_machine_rejected_to_graph_blocked(client):
     # rejected → graph (illegal, must be re-activated to pending via new evidence first)
     resp = await client.post(f"{BASE}/candidates/{cand_id}/accept", json={"reviewer": "admin"})
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_mine_single_file_multiple_hits_evidence(client):
+    """单文件内同候选多次命中，evidence 应累加而非只保留最后一次。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_MHIT", "V_MHIT")
+    # 1 APN + 4 VPNINST, all share same VPN value
+    content = (
+        b'ADD APN: VPN="vpn1";\n'
+        b'ADD VPNINST: VRFNAME="vpn1";\n'
+        b'ADD VPNINST: VRFNAME="vpn1";\n'
+        b'ADD VPNINST: VRFNAME="vpn1";\n'
+        b'ADD VPNINST: VRFNAME="vpn1";\n'
+    )
+    entries, _ = await _upload_file(client, "mhit.mml", content, ne_id)
+    file_id = entries[0]["id"]
+
+    resp = await client.post(f"{BASE}/files/mine", json={"file_ids": [file_id]})
+    assert resp.status_code == 200
+
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    assert len(cands) >= 1
+    cand = cands[0]
+
+    # Verify evidence has accumulated hits
+    evidence = json.loads(cand["evidence_json"]) if isinstance(cand["evidence_json"], str) else cand["evidence_json"]
+    assert evidence["hit_count"] >= 3, f"Expected >=3 hits but got {evidence['hit_count']}"
+    assert evidence["hit_file_count"] >= 1
+    assert "total_mined_files" in evidence
+
+
+@pytest.mark.asyncio
+async def test_mine_support_uses_total_files(client):
+    """support 应基于总挖掘文件数，不是只基于有命中的文件数。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_SUPP", "V_SUPP")
+
+    # File 1: has VPN-APN match
+    entries1, _ = await _upload_file(client, "supp1.mml", b'ADD VPN: VPN="v1";\nADD APN: VRFNAME="v1";', ne_id)
+    # File 2: no match (different commands)
+    entries2, _ = await _upload_file(client, "supp2.mml", b'ADD EQM: EQMID="eqm1";', ne_id)
+    # File 3: has VPN-APN match
+    entries3, _ = await _upload_file(client, "supp3.mml", b'ADD VPN: VPN="v3";\nADD APN: VRFNAME="v3";', ne_id)
+
+    file_ids = [entries1[0]["id"], entries2[0]["id"], entries3[0]["id"]]
+    resp = await client.post(f"{BASE}/files/mine", json={"file_ids": file_ids})
+    assert resp.status_code == 200
+
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    assert len(cands) >= 1
+    # The VPN-APN candidate should have support < 1.0 because file 2 has no match
+    scores = json.loads(cands[0]["scores_json"]) if isinstance(cands[0]["scores_json"], str) else cands[0]["scores_json"]
+    assert scores["support"] < 1.0, f"Expected support < 1.0 (2/3 files hit), got {scores['support']}"
+    # 2 out of 3 files had the match
+    assert abs(scores["support"] - 2/3) < 0.01, f"Expected support ≈ 0.667, got {scores['support']}"

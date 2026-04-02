@@ -91,6 +91,10 @@ def generate_candidates(
 
                         key = (ref_cmd_key, param_j["name"], def_cmd_key, param_i["name"])
 
+                        # Skip self-referential candidates (same command + same param)
+                        if ref_cmd_key == def_cmd_key and param_j["name"] == param_i["name"]:
+                            continue
+
                         if key not in accumulator:
                             accumulator[key] = {
                                 "script_ids": set(),
@@ -219,7 +223,8 @@ def generate_single_file_candidates(
 
     # Find value matches: def before ref (i < j) — same pairing logic as
     # generate_candidates but scoped to a single file.
-    results: list[dict] = []
+    # Accumulate by key so multiple hits within the same file are merged.
+    by_key: dict[tuple, dict] = {}
 
     for i in range(len(cmd_ids)):
         for j in range(i + 1, len(cmd_ids)):
@@ -239,37 +244,53 @@ def generate_single_file_candidates(
 
                     key = (ref_cmd_key, param_j["name"], def_cmd_key, param_i["name"])
 
-                    # For single file: support=1.0, distinctiveness=1.0
-                    scores = _calculate_scores(
-                        hit_count=1,
-                        total_scripts=1,
-                        unique_values=1,
-                        values={val_i},
-                        sample_lines=[(cmd_i.get("line_number"), cmd_j.get("line_number"))],
-                        ref_param=param_j["name"],
-                        def_param=param_i["name"],
-                        weights=weights,
-                    )
+                    # Skip self-referential candidates (same command + same param)
+                    if ref_cmd_key == def_cmd_key and param_j["name"] == param_i["name"]:
+                        continue
 
-                    results.append({
-                        "file_entry_id": file_id,
-                        "ne_version_id": ne_version_id,
-                        "ref_command": key[0],
-                        "ref_param": key[1],
-                        "def_command": key[2],
-                        "def_param": key[3],
-                        "evidence": {
-                            "hit_count": 1,
-                            "hit_values": {val_i},
-                            "sample_scripts": [
-                                {
-                                    "def_line": cmd_i.get("line_number"),
-                                    "ref_line": cmd_j.get("line_number"),
-                                }
-                            ],
-                        },
-                        "scores": scores,
-                    })
+                    if key not in by_key:
+                        by_key[key] = {
+                            "hit_values": set(),
+                            "sample_scripts": [],
+                        }
+                    by_key[key]["hit_values"].add(val_i)
+                    if len(by_key[key]["sample_scripts"]) < 10:
+                        by_key[key]["sample_scripts"].append({
+                            "def_line": cmd_i.get("line_number"),
+                            "ref_line": cmd_j.get("line_number"),
+                        })
+
+    # Build results from accumulated data
+    results: list[dict] = []
+    for key, data in by_key.items():
+        hit_count = len(data["sample_scripts"])
+        unique_values = len(data["hit_values"])
+
+        scores = _calculate_scores(
+            hit_count=hit_count,
+            total_scripts=1,
+            unique_values=unique_values,
+            values=data["hit_values"],
+            sample_lines=[(s["def_line"], s["ref_line"]) for s in data["sample_scripts"]],
+            ref_param=key[1],
+            def_param=key[3],
+            weights=weights,
+        )
+
+        results.append({
+            "file_entry_id": file_id,
+            "ne_version_id": ne_version_id,
+            "ref_command": key[0],
+            "ref_param": key[1],
+            "def_command": key[2],
+            "def_param": key[3],
+            "evidence": {
+                "hit_count": hit_count,
+                "hit_values": sorted(data["hit_values"]),
+                "sample_scripts": data["sample_scripts"],
+            },
+            "scores": scores,
+        })
 
     return results
 

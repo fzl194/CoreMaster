@@ -1198,6 +1198,14 @@ class Plugin:
             # Get algorithm version
             alg_ver = "v1"
 
+            # Count total mined files for this ne_version (for support calculation)
+            total_mined_rows = await self.db.query(
+                "SELECT COUNT(DISTINCT file_entry_id) as cnt FROM file_mining_record "
+                "WHERE ne_version_id=? AND mined=1",
+                (ne_version_id,),
+            )
+            total_mined_files_before = total_mined_rows[0]["cnt"] if total_mined_rows else 0
+
             all_candidates = []
 
             for file_id in file_ids:
@@ -1306,7 +1314,7 @@ class Plugin:
                     )
 
                     # Recalculate aggregated scores
-                    await self._recalculate_candidate_scores(cand_id, alg_ver)
+                    await self._recalculate_candidate_scores(cand_id, alg_ver, total_mined_files_before + len(file_ids))
 
                     # If status was 'rejected': reactivate
                     if cand_status == "rejected":
@@ -1409,7 +1417,7 @@ class Plugin:
                         continue
                 else:
                     # Recalculate scores
-                    await self._recalculate_candidate_scores(cand_id, alg_ver)
+                    await self._recalculate_candidate_scores(cand_id, alg_ver)  # total_mined_files will be auto-detected
 
             # Step 4: Re-execute mine logic for this single file
             resp = await mine_selected_files({"file_ids": [file_id]})
@@ -1444,8 +1452,14 @@ class Plugin:
         else:
             return "manual"
 
-    async def _recalculate_candidate_scores(self, cand_id: int, alg_ver: str):
-        """Recalculate aggregated scores for a candidate from its contributions."""
+    async def _recalculate_candidate_scores(self, cand_id: int, alg_ver: str, total_mined_files: int = 0):
+        """Recalculate aggregated scores for a candidate from its contributions.
+
+        Args:
+            cand_id: candidate id
+            alg_ver: algorithm version to filter contributions
+            total_mined_files: total number of mined files for the ne_version (for support calc)
+        """
         from candidate_engine import aggregate_contributions
 
         contribs = await self.db.query(
@@ -1457,22 +1471,55 @@ class Plugin:
         if not contribs:
             return
 
+        # Get total mined files if not provided
+        if total_mined_files <= 0:
+            cand_rows = await self.db.query(
+                "SELECT ne_version_id FROM dependency_candidate WHERE id=?",
+                (cand_id,),
+            )
+            if cand_rows:
+                mined_rows = await self.db.query(
+                    "SELECT COUNT(DISTINCT file_entry_id) as cnt FROM file_mining_record "
+                    "WHERE ne_version_id=? AND mined=1",
+                    (cand_rows[0]["ne_version_id"],),
+                )
+                total_mined_files = mined_rows[0]["cnt"] if mined_rows else len(contribs)
+
         # Build contribution list for aggregation
+        # Include ALL mined files: ones with hits as has_hit=True, and calculate
+        # how many files had no hit for this candidate (for support denominator)
+        hit_file_count = len(contribs)
+        total_hit_count = 0
         contrib_list = []
         all_evidence = []
         for c in contribs:
             scores = json.loads(c["scores_json"])
             evidence = json.loads(c["evidence_json"])
+            hit_count = evidence.get("hit_count", 1)
+            total_hit_count += hit_count
             contrib_list.append({
                 "has_hit": True,
                 "hit_values": evidence.get("hit_values", []),
                 "order_consistency": scores.get("order_consistency", 0.0),
                 "name_relevance": scores.get("name_relevance", 0.0),
-                "hit_count": evidence.get("hit_count", 0),
+                "hit_count": hit_count,
                 "confidence": scores.get("confidence", 0.0),
                 "sample_scripts": evidence.get("sample_scripts", []),
             })
             all_evidence.append(evidence)
+
+        # Add placeholder contributions for files without hits (for correct support)
+        no_hit_count = max(0, total_mined_files - hit_file_count)
+        for _ in range(no_hit_count):
+            contrib_list.append({
+                "has_hit": False,
+                "hit_values": [],
+                "order_consistency": 0.0,
+                "name_relevance": 0.0,
+                "hit_count": 0,
+                "confidence": 0.0,
+                "sample_scripts": [],
+            })
 
         aggregated = aggregate_contributions(contrib_list)
 
@@ -1491,8 +1538,9 @@ class Plugin:
                 all_scripts.append(s)
 
         new_evidence = {
-            "hit_count": len(contribs),
-            "total_scripts": len(contribs),
+            "hit_count": total_hit_count,
+            "hit_file_count": hit_file_count,
+            "total_mined_files": total_mined_files,
             "hit_values": sorted(all_values),
             "sample_scripts": all_scripts[:10],
         }
