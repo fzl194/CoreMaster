@@ -147,3 +147,65 @@ Claude 在修复审查问题后，必须单独写 fix，不得回写 review 结�
 - 只有在“主题语义已经明显切换”或“必须长期并行保留旧版基线供比较”时，才允许新建并行文档
 - `docs/messages/<task-id>.md` 继续承担协作历史沉淀；正式 plan / handoff / fix 文档应保持单一路径上的当前有效版本
 - Claude 在修订设计、计划、handoff、fix 时，应优先回写原文件并更新修订说明，避免在仓库中生成大量零散版本文件
+
+## 9. Skill 使用规范
+
+Claude 在工作中必须根据任务阶段主动调用对应 Skill，不得跳过。
+
+### 9.1 核心流程 Skill（强制，无例外）
+
+| 阶段 | Skill | 铁律 |
+|------|-------|------|
+| 接到新需求 | `superpowers:brainstorming` | 禁止跳过直接写代码，即使"看起来简单"。必须探索上下文、逐个提问澄清、提出 2-3 个方案、获得用户批准 |
+| 设计批准后 | `superpowers:writing-plans` | 输出到 `docs/plans/`。每步 2-5 分钟粒度，含完整代码和测试命令 |
+| 写任何代码 | `superpowers:test-driven-development` | 铁律：先写失败测试 → 验证失败 → 最小实现 → 验证通过 → 重构。禁止先写实现再补测试 |
+| 遇到 bug/测试失败 | `superpowers:systematic-debugging` | 禁止猜测式修复。四阶段：根因调查 → 模式分析 → 假设测试 → 实现。连续 3 次修复失败须质疑架构 |
+| 宣称工作完成 | `superpowers:verification-before-completion` | 禁止用"应该能工作"代替验证。必须跑命令看输出，凭证据声称结果 |
+
+### 9.2 执行方式 Skill（按需选择）
+
+| Skill | 适用场景 |
+|-------|---------|
+| `superpowers:executing-plans` | 跨会话执行计划，每 3 个任务停下来报告 |
+| `superpowers:subagent-driven-development` | 本会话内执行计划，每个任务派子代理 + 两阶段审查（规格+质量） |
+| `superpowers:dispatching-parallel-agents` | 3+ 个独立问题需并行处理（如多个测试文件失败、多个子系统问题） |
+
+### 9.3 审查与交接 Skill
+
+| Skill | 触发条件 |
+|-------|---------|
+| `superpowers:requesting-code-review` | 完成功能后、合并前，派遣 code-reviewer 子代理 |
+| `superpowers:receiving-code-review` | 收到审查反馈时。禁止表演性赞同（"你说得对！"），先验证再实现，可以技术性反驳 |
+| `code-review:code-review` | 审查 PR 时，5 个并行代理独立审查 |
+
+### 9.4 分支管理 Skill
+
+| Skill | 触发条件 |
+|-------|---------|
+| `superpowers:using-git-worktrees` | 需要隔离工作空间时（特性开发、执行计划前） |
+| `superpowers:finishing-a-development-branch` | 所有任务完成、测试通过后，验证 → 呈现 4 个选项（合并/PR/保留/丢弃）→ 执行 → 清理 |
+
+### 9.5 前端开发 Skill（涉及 UI 时触发）
+
+| Skill | 说明 |
+|-------|------|
+| `frontend-design` | 构建前端界面/组件时，追求大胆独特的美学方向，避免 AI 通用风格 |
+| `ui-ux-pro-max` | 涉及 UI 结构、交互模式、视觉设计、用户体验时。含 50+ 风格、161 色板、99 条 UX 规则、25 图表类型。优先级：无障碍 > 触控 > 性能 > 风格 > 布局 > 排版 > 动画 > 表单 > 导航 > 图表 |
+
+### 9.6 按需触发 Skill
+
+| Skill | 触发条件 |
+|-------|---------|
+| `claude-api` | 代码涉及 `anthropic` SDK / Claude API / Agent SDK 时 |
+| `simplify` | 代码修改完成后的清理审查。3 个并行代理：复用审查 / 质量审查 / 效率审查 |
+| `pdf` | 涉及 PDF 文件操作时（读取/合并/拆分/水印/OCR 等） |
+| `find-skills` | 需要寻找新 skill 扩展能力时 |
+| `superpowers:writing-skills` | 需要创建或编辑 skill 时 |
+
+### 9.7 Skill 调用优先级
+
+当多个 Skill 可能同时适用时：
+
+1. **流程型 Skill 优先**（brainstorming、systematic-debugging）—— 决定"怎么做"
+2. **实现型 Skill 其次**（frontend-design、ui-ux-pro-max）—— 指导执行
+3. **一个 Skill 的输出可能是另一个 Skill 的触发条件**：brainstorming → writing-plans → subagent-driven-development / executing-plans → finishing-a-development-branch
