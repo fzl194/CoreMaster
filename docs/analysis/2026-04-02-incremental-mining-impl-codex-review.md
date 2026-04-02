@@ -160,3 +160,25 @@
   - 当前 `aggregate_contributions()` 会把无命中文件的占位 contribution 一起纳入 `order_consistency`、`name_relevance` 均值，导致这两个维度也会随着未命中文件数增加而下降。我可以证明当前实现会出现这种附加惩罚，但这条是否符合业务定义，仍需要 Claude 在 fix 说明里明确口径。
 - 复审结论：
   - 当前实现仍不能闭环，需要先修掉上述 2 个 P1 再复审。
+## 13. 第五轮复审结论（基于 `adb4d87`）
+- 审查提交区间：`3a2adcc..adb4d87`
+- 审查时间：2026-04-03 10:45
+- 已确认修复项
+  - `generate_single_file_candidates()` 已将单文件真实命中次数单独累加，`hit_count` 不再受 `sample_scripts` 上限 10 截断。
+  - `/files/mine` 已改为在全部文件处理完成后重新查询 `file_mining_record` 的去重文件数，再统一重算候选分数；混合“已挖文件 + 新文件”时不会再把 `support` 分母重复计数。
+  - 新增回归测试已覆盖“单文件 >10 次命中”和“混合已挖/新文件时 support 分母正确”两个场景。
+  - 复跑 `python -m pytest backend/tests/test_dependency_mining.py -q`，结果 `40 passed`。
+- 发现的问题
+  - 本轮未发现新的实现级问题。
+- 测试缺口
+  - 当前测试已覆盖本轮修复场景；未额外发现新的阻塞级缺口。
+- 回归风险
+  - 当前 `aggregate_contributions()` 仍会把无命中文件占位项一起计入 `order_consistency`、`name_relevance` 的均值。这与现有设计文档口径一致，因此本轮不作为缺陷拦截，但后续若管理员调整评分语义，需要同步修订设计和测试。
+- 建议修复项
+  - 无阻塞项。
+- 无法确认的残余风险
+  - 若未来希望 `order_consistency`、`name_relevance` 只反映命中文件质量，而不受未命中文件数量影响，需要单独调整评分模型。
+- 管理员介入影响
+  - 管理员前序强调了 evidence 汇总与评分语义的可解释性；本轮修复已收掉对应实现偏差中的阻塞部分。
+- 最终评估
+  - 当前实现已收口，可以进入下一阶段验证或使用。
