@@ -46,15 +46,15 @@
 - 状态：Claude 交接中
 - 当前阶段：MVP 实现完成，待 Codex 审查
 - Claude：实现完成
-- Codex：已完成复审；首轮 3 个 P1 已修，但管理员新需求要求改为文件级增量挖掘，待 Claude 重出设计
+- Codex：已完成设计复审；增量挖掘方向正确，但仍有 3 个设计级 P1，待 Claude 修订设计文档
 - 管理员：
 - 计划文档：`docs/plans/2026-04-02-mml-dependency-mining-mvp-impl-plan.md`
 - 交接文档：`docs/handoffs/2026-04-02-dep-mining-mvp-claude-handoff.md`
-- 审查文档：`docs/analysis/2026-04-02-dep-mining-mvp-codex-review.md`；`docs/analysis/2026-04-02-dep-mining-mvp-incremental-requirements-codex-review.md`
+- 审查文档：`docs/analysis/2026-04-02-dep-mining-mvp-codex-review.md`；`docs/analysis/2026-04-02-dep-mining-mvp-incremental-requirements-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-codex-review.md`
 - 修复文档：
 - 管理员文档：
 - 设计参考：`docs/plans/2026-04-01-mml-dependency-mining-design.md`
-- 最新消息序号：`MSG-20260402-095200-codex`
+- 最新消息序号：`MSG-20260402-104300-codex`
 - 备注：MVP 实现已完成，含解析器增强、候选生成引擎、审核队列 API、前端视图
 
 ---
