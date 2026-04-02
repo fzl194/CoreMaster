@@ -236,6 +236,36 @@ def test_parse_text_backward_compat():
     assert "line_number" in result[0]
 
 
+def test_block_comment_inside_double_quotes_preserved():
+    """Block comment pattern inside double-quoted value must NOT be stripped."""
+    svc = _svc()
+    text = 'ADD APN: DESC="keep /* not comment */ text", APN="x";\n'
+    result = svc.parse_text(text)
+    assert len(result) == 1
+    desc_val = result[0]["params"][0]["value"]
+    assert desc_val == "keep /* not comment */ text"
+
+
+def test_block_comment_inside_single_quotes_preserved():
+    """Block comment pattern inside single-quoted value must NOT be stripped."""
+    svc = _svc()
+    text = "ADD APN: DESC='keep /* not comment */ text', APN='x';\n"
+    result = svc.parse_text(text)
+    assert len(result) == 1
+    desc_val = result[0]["params"][0]["value"]
+    assert desc_val == "keep /* not comment */ text"
+
+
+def test_block_comment_mixed_with_quoted_values():
+    """Real block comment stripped, but quoted /* ... */ preserved."""
+    svc = _svc()
+    text = '/* header comment */\nADD APN: DESC="keep /* inner */ ok", APN="x";\n'
+    result = svc.parse_text(text)
+    assert len(result) == 1
+    desc_val = result[0]["params"][0]["value"]
+    assert desc_val == "keep /* inner */ ok"
+
+
 def test_parse_report_with_multiline():
     """Multi-line command counts as 2 total_lines but 1 parsed."""
     svc = _svc()

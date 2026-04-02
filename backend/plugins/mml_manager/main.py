@@ -676,6 +676,54 @@ class Plugin:
 
             return {"instances": instances, "total": len(instances), "report": report}
 
+        @self.router.post("/versions/{ne_version_id}/batch-extract")
+        async def batch_extract_commands(ne_version_id: int):
+            """Extract command instances from all files of a given NE version."""
+            file_rows = await self.db.query(
+                "SELECT id, name, file_path FROM file_entry "
+                "WHERE ne_version_id=? AND type='file'",
+                (ne_version_id,),
+            )
+            if not file_rows:
+                return {"extracted": [], "total_files": 0, "total_instances": 0}
+
+            extracted = []
+            total_instances = 0
+            for entry in file_rows:
+                p = _safe_file_path(entry["file_path"])
+                if p is None or not p.exists():
+                    continue
+                content = p.read_text(encoding="utf-8")
+                result = self.parser.parse_text_with_report(content)
+                commands = result["commands"]
+
+                await self.db.execute(
+                    "DELETE FROM command_instance WHERE file_entry_id=?", (entry["id"],)
+                )
+
+                for idx, cmd in enumerate(commands):
+                    params_json = json.dumps(cmd["params"], ensure_ascii=False)
+                    await self.db.execute(
+                        "INSERT INTO command_instance "
+                        "(file_entry_id, ne_version_id, command_index, operation, name, params_json, line_number) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (entry["id"], ne_version_id, idx, cmd["operation"], cmd["name"],
+                         params_json, cmd["line_number"]),
+                    )
+
+                extracted.append({
+                    "file_id": entry["id"],
+                    "file_name": entry["name"],
+                    "instance_count": len(commands),
+                })
+                total_instances += len(commands)
+
+            return {
+                "extracted": extracted,
+                "total_files": len(extracted),
+                "total_instances": total_instances,
+            }
+
         # ── Dependency Mining: Candidate Generation ────────────────────
 
         @self.router.post("/candidates/generate")
@@ -730,9 +778,16 @@ class Plugin:
                          c["confidence"], scores_json, evidence_json),
                     )
                 except Exception:
+                    # Unique-key conflict: update scores/evidence but preserve
+                    # human terminal states (accepted / rejected).
                     await self.db.execute(
-                        "UPDATE dependency_candidate SET status=?, confidence=?, "
-                        "scores_json=?, evidence_json=?, updated_at=CURRENT_TIMESTAMP "
+                        "UPDATE dependency_candidate SET "
+                        "status = CASE "
+                        "  WHEN status IN ('accepted', 'rejected') THEN status "
+                        "  ELSE ? "
+                        "END, "
+                        "confidence=?, scores_json=?, evidence_json=?, "
+                        "updated_at=CURRENT_TIMESTAMP "
                         "WHERE ne_version_id=? AND ref_command=? AND ref_param=? "
                         "AND def_command=? AND def_param=?",
                         (c["status"], c["confidence"], scores_json, evidence_json,

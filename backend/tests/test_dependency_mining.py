@@ -344,3 +344,94 @@ async def test_full_pipeline(client):
     resp = await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id, "status": "accepted"})
     accepted = resp.json()
     assert any(c["id"] == candidate_id for c in accepted)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_preserves_accepted_status(client):
+    """Generate → Accept → Regenerate: accepted status must NOT be overwritten."""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_REGEN", "V100R500")
+    scripts = [
+        b'ADD VPN: VPN="vpn_regen1";\nADD APN: VRFNAME="vpn_regen1";\n',
+    ]
+    for i, content in enumerate(scripts):
+        entries, _ = await _upload_file(client, f"regen_{i}.mml", content, ne_id)
+        await client.post(f"{BASE}/scripts/{entries[0]['id']}/extract-commands")
+
+    # First generate
+    resp = await client.post(f"{BASE}/candidates/generate", json={"ne_version_id": ne_id})
+    candidates = resp.json()["candidates"]
+    assert len(candidates) >= 1
+    candidate_id = candidates[0]["id"]
+
+    # Accept
+    resp = await client.post(
+        f"{BASE}/candidates/{candidate_id}/accept",
+        json={"reviewer": "test_admin"},
+    )
+    assert resp.status_code == 200
+
+    # Regenerate — accepted status must be preserved
+    resp = await client.post(f"{BASE}/candidates/generate", json={"ne_version_id": ne_id})
+    assert resp.status_code == 200
+    regenerated = resp.json()["candidates"]
+    match = [c for c in regenerated if c["id"] == candidate_id]
+    assert len(match) == 1
+    assert match[0]["status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_preserves_rejected_status(client):
+    """Generate → Reject → Regenerate: rejected status must NOT be overwritten."""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_REGEN2", "V100R600")
+    scripts = [
+        b'ADD VPN: VPN="vpn_rej2";\nADD APN: VRFNAME="vpn_rej2";\n',
+    ]
+    for i, content in enumerate(scripts):
+        entries, _ = await _upload_file(client, f"regenrej_{i}.mml", content, ne_id)
+        await client.post(f"{BASE}/scripts/{entries[0]['id']}/extract-commands")
+
+    # First generate
+    resp = await client.post(f"{BASE}/candidates/generate", json={"ne_version_id": ne_id})
+    candidates = resp.json()["candidates"]
+    assert len(candidates) >= 1
+    candidate_id = candidates[0]["id"]
+
+    # Reject
+    resp = await client.post(
+        f"{BASE}/candidates/{candidate_id}/reject",
+        json={"reviewer": "test_admin"},
+    )
+    assert resp.status_code == 200
+
+    # Regenerate — rejected status must be preserved
+    resp = await client.post(f"{BASE}/candidates/generate", json={"ne_version_id": ne_id})
+    assert resp.status_code == 200
+    regenerated = resp.json()["candidates"]
+    match = [c for c in regenerated if c["id"] == candidate_id]
+    assert len(match) == 1
+    assert match[0]["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_batch_extract_commands(client):
+    """Batch extract all files for an NE version, then generate candidates."""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_BATCH", "V100R700")
+    scripts = [
+        b'ADD VPN: VPN="vpn_batch1";\nADD APN: VRFNAME="vpn_batch1";\n',
+        b'ADD VPN: VPN="vpn_batch2";\nADD APN: VRFNAME="vpn_batch2";\n',
+    ]
+    for i, content in enumerate(scripts):
+        await _upload_file(client, f"batch_{i}.mml", content, ne_id)
+
+    # Batch extract — no per-file extract-commands call needed
+    resp = await client.post(f"{BASE}/versions/{ne_id}/batch-extract")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_files"] == 2
+    assert data["total_instances"] == 4  # 2 commands per script
+
+    # Generate should now work without prior per-file extraction
+    resp = await client.post(f"{BASE}/candidates/generate", json={"ne_version_id": ne_id})
+    assert resp.status_code == 200
+    candidates = resp.json()["candidates"]
+    assert len(candidates) >= 1

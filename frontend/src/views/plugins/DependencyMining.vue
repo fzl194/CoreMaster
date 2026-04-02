@@ -116,6 +116,7 @@ import {
   fetchCandidates as apiFetch,
   acceptCandidate as apiAccept,
   rejectCandidate as apiReject,
+  batchExtractCommands as apiBatchExtract,
   type Candidate,
 } from "../../api/dependency-mining";
 
@@ -252,10 +253,13 @@ async function handleGenerate(): Promise<void> {
   if (!selectedNeVersionId.value) return;
   generating.value = true;
   try {
+    // Step 1: batch-extract command instances from all scripts
+    await apiBatchExtract(selectedNeVersionId.value);
+    // Step 2: generate dependency candidates
     const result = await apiGenerate(selectedNeVersionId.value);
     candidates.value = result.candidates;
   } catch (e) {
-    console.error("Generation failed:", e);
+    console.error("Extract & generate failed:", e);
   } finally {
     generating.value = false;
   }

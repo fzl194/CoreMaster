@@ -39,10 +39,62 @@ class ParserService:
         text = Path(path).read_text(encoding="utf-8")
         return self.parse_text(text)
 
+    @staticmethod
+    def _strip_block_comments(text: str) -> str:
+        """Remove block comments /* ... */ while preserving quoted content."""
+        result = []
+        i = 0
+        n = len(text)
+        while i < n:
+            # Track quote state
+            if text[i] == '"':
+                result.append(text[i])
+                i += 1
+                while i < n and text[i] != '"':
+                    if text[i] == '\\' and i + 1 < n:
+                        result.append(text[i])
+                        result.append(text[i + 1])
+                        i += 2
+                    else:
+                        result.append(text[i])
+                        i += 1
+                if i < n:
+                    result.append(text[i])  # closing "
+                    i += 1
+                continue
+            if text[i] == "'":
+                result.append(text[i])
+                i += 1
+                while i < n and text[i] != "'":
+                    if text[i] == '\\' and i + 1 < n:
+                        result.append(text[i])
+                        result.append(text[i + 1])
+                        i += 2
+                    else:
+                        result.append(text[i])
+                        i += 1
+                if i < n:
+                    result.append(text[i])  # closing '
+                    i += 1
+                continue
+            # Check for block comment start
+            if text[i] == '/' and i + 1 < n and text[i + 1] == '*':
+                # Skip until */
+                i += 2
+                while i < n:
+                    if text[i] == '*' and i + 1 < n and text[i + 1] == '/':
+                        i += 2
+                        break
+                    i += 1
+                continue
+            result.append(text[i])
+            i += 1
+        return ''.join(result)
+
     def parse_text_with_report(self, text: str) -> dict:
         """解析 MML 文本，返回命令列表和解析报告。"""
-        # Strip block comments first
-        text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+        # Strip block comments first (quote-aware)
+        text = self._strip_block_comments(text)
 
         commands = []
         report = {

@@ -46,6 +46,15 @@ export interface Candidate {
 
 // ── API Functions ───────────────────────────────────────────────────────────
 
+export async function batchExtractCommands(
+  neVersionId: number
+): Promise<{ extracted: { file_id: number; file_name: string; instance_count: number }[]; total_files: number; total_instances: number }> {
+  const { data } = await api.post(
+    `/plugins/mml_manager/versions/${neVersionId}/batch-extract`
+  );
+  return data;
+}
+
 export async function extractCommands(
   fileId: number
 ): Promise<{ instances: CommandInstance[]; total: number; report: Record<string, number> }> {
