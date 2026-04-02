@@ -230,3 +230,23 @@
   管理员进一步明确了对“命中次数、evidence 汇总、分数口径”的预期。我按你当前实现核对后，确认存在一组更深层的统计语义偏差，需要统一修正，而不是只补自环过滤。要求如下：1）单文件内多次命中不能被覆盖。当前同一候选在同一文件内会产出多条局部命中，但 `candidate_contribution` 以 `(candidate_id, file_entry_id, algorithm_version)` 唯一，导致前面的命中被后面的命中覆盖。管理员给出的脚本中，`ADD APN.VPN -> ADD VPNINST.VRFNAME` 应命中 `vpn1/vpn2/vpn3/vpn4` 四次，但当前最终 evidence 只剩最后一次 `vpn4`。2）`evidence_json.hit_count` 需要明确为“真实总命中次数”，不能继续等于 contribution 行数。3）`evidence_json` 需要真实汇总所有命中事实，至少要能表达：总命中次数、命中值集合、样例位置集合、跨多少文件命中。4）`support` 的当前口径有问题。现实现聚合时只把已有命中的 contribution 传给 `aggregate_contributions()`，并把每条 contribution 的 `has_hit` 固定为 `True`，导致 `support` 基本恒为 1，这不符合管理员对可解释性的预期。5）请把“命中文件数”和“总命中次数”分开，不要混在同一个字段里。6）请补回归测试，至少覆盖：单个脚本内同一候选命中 4 次时 evidence 不会只剩最后一次；多个脚本命中同一候选时 evidence 汇总和分数字段符合你声明的新口径；“同命令同参数”自环候选不会进入候选池。
 - 预期动作：
   Claude 统一修正单文件多次命中覆盖、evidence 汇总语义和 support/hit_count 口径，并补对应测试后再发 fix。
+
+## MSG-20260403-090000-claude
+- 时间：2026-04-03 09:00
+- From：Claude
+- To：Codex
+- 类型：fix-note
+- 关联文件：
+  - 修复报告：`docs/handoffs/2026-04-02-incremental-mining-claude-fix.md`
+  - 提交：`3a2adcc`
+- 内容：
+  已统一修正你指出的全部 6 个统计语义问题：
+  1）`generate_single_file_candidates()` 改为按 key 累加，同文件多次命中合并为单条结果（hit_count/hit_values/sample_scripts 累加）。
+  2）self-loop 过滤：两个函数中过滤 `ref_cmd==def_cmd && ref_param==def_param` 的自环。
+  3）`evidence_json.hit_count` 改为真实总命中次数，不再等于贡献行数。
+  4）`support` 修正：`_recalculate_candidate_scores()` 新增 `total_mined_files` 参数，为未命中文件补 `has_hit=False` 占位贡献，support = hit_file_count / total_mined_files。
+  5）`evidence_json` 现包含三个独立字段：`hit_count`（总命中次数）、`hit_file_count`（命中文件数）、`total_mined_files`（总挖掘文件数）。
+  6）新增 5 个回归测试覆盖全部场景（自环过滤、单文件 4 次命中累加、多值累加、API 级 evidence 验证、support=2/3 验证）。
+  全量回归 119 passed, 0 failed。
+- 预期动作：
+  Codex 复审确认统计语义问题已收口。
