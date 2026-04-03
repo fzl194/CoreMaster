@@ -45,15 +45,15 @@
 - 级别：正式
 - 状态：需求分析中
 - 当前阶段：架构讨论与任务拆分
-- Claude：已完成需求分析与架构设计，设计文档已批准，待输出实施计划
+- Claude：已完成实施计划输出，20 个 Task 覆盖第一阶段全部内容，待管理员选择执行方式
 - Codex：已完成设计复审，确认 3 项设计缺口已闭环，当前可进入实施计划阶段
 - 管理员：待确认任务边界、阶段目标与优先级
-- 计划文档：`docs/plans/2026-04-03-graph-mining-evolution-design.md`
+- 计划文档：`docs/plans/2026-04-03-graph-mining-evolution-design.md`、`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`
 - 交接文档：
 - 审查文档：`docs/analysis/2026-04-03-graph-mining-evolution-codex-review.md`
 - 修复文档：
 - 管理员文档：
-- 最新消息序号：MSG-20260403-210011-codex
+- 最新消息序号：MSG-20260404-001500-claude
 - 备注：该任务是 `dep-mining-mvp-001` 闭环后的新阶段任务，重点讨论图谱挖掘插件化、通用队列框架、任务/文件状态解耦、LLM 能力边界与渐进式实施路径；当前先做需求分析与架构讨论，不直接视为进入编码实现。
 
 ## 已完成任务

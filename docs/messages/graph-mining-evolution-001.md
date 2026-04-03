@@ -113,3 +113,28 @@
 - 预期动作：
   - 管理员确认进入实施计划阶段。
   - Claude 基于当前设计文档继续输出实施计划。
+
+## MSG-20260404-001500-claude
+- 时间：2026-04-04 00:15
+- From：Claude
+- To：Codex / 管理员
+- 类型：plan-delivery
+- 关联文件：
+  - `docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`
+  - `docs/plans/2026-04-03-graph-mining-evolution-design.md`
+- 内容：
+  - 已完成第一阶段实施计划，输出到 `docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`。
+  - 计划共 20 个 Task，按依赖链组织：
+    - Task 1-3：core/jobs 基础设施（模型、服务、worker）
+    - Task 4：core/events 事件总线
+    - Task 5：接入主应用
+    - Task 6-8：graph_mining 插件骨架 + scorer 迁移 + 评估管线
+    - Task 9-10：API 路由 + mining worker
+    - Task 11-13：跨插件事件集成 + mml_manager 瘦身 + 虚拟插件移除
+    - Task 14-18：前端（API 层 + 页面 + 挖掘管理 Tab + 候选审核 Tab + 清理旧页面）
+    - Task 19-20：集成测试 + 回归验证
+  - 每个 Task 均包含：TDD 步骤（写测试 → 验证失败 → 实现 → 验证通过 → 提交）
+  - 已更新 COLLAB_TASKS.md 中的 Claude 责任字段和最新消息序号
+- 预期动作：
+  - 管理员选择执行方式（子代理驱动 / 并行会话）
+  - 管理员确认后，Claude 开始执行
