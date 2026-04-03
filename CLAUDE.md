@@ -174,25 +174,16 @@ Claude 在工作中必须根据任务阶段主动调用对应 Skill，不得跳�
 
 | Skill | 触发条件 |
 |-------|---------|
-| `superpowers:requesting-code-review` | 完成功能后、合并前，派遣 code-reviewer 子代理 |
 | `superpowers:receiving-code-review` | 收到审查反馈时。禁止表演性赞同（"你说得对！"），先验证再实现，可以技术性反驳 |
-| `code-review:code-review` | 审查 PR 时，5 个并行代理独立审查 |
 
-### 9.4 分支管理 Skill
-
-| Skill | 触发条件 |
-|-------|---------|
-| `superpowers:using-git-worktrees` | 需要隔离工作空间时（特性开发、执行计划前） |
-| `superpowers:finishing-a-development-branch` | 所有任务完成、测试通过后，验证 → 呈现 4 个选项（合并/PR/保留/丢弃）→ 执行 → 清理 |
-
-### 9.5 前端开发 Skill（涉及 UI 时触发）
+### 9.4 前端开发 Skill（涉及 UI 时触发）
 
 | Skill | 说明 |
 |-------|------|
 | `frontend-design` | 构建前端界面/组件时，追求大胆独特的美学方向，避免 AI 通用风格 |
 | `ui-ux-pro-max` | 涉及 UI 结构、交互模式、视觉设计、用户体验时。含 50+ 风格、161 色板、99 条 UX 规则、25 图表类型。优先级：无障碍 > 触控 > 性能 > 风格 > 布局 > 排版 > 动画 > 表单 > 导航 > 图表 |
 
-### 9.6 按需触发 Skill
+### 9.5 按需触发 Skill
 
 | Skill | 触发条件 |
 |-------|---------|
@@ -202,7 +193,7 @@ Claude 在工作中必须根据任务阶段主动调用对应 Skill，不得跳�
 | `find-skills` | 需要寻找新 skill 扩展能力时 |
 | `superpowers:writing-skills` | 需要创建或编辑 skill 时 |
 
-### 9.7 Skill 调用优先级
+### 9.6 Skill 调用优先级
 
 当多个 Skill 可能同时适用时：
 
