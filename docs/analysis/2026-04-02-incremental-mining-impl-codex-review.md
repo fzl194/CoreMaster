@@ -195,3 +195,20 @@
   - 现有测试覆盖了 `hit_count` 累加、`support` 分母和部分状态机，但没有覆盖：1）`graph/non_graph` 零 contribution 后 evidence 是否同步清零；2）graph edge 是否随新增 contribution 更新 evidence；3）前端 evidence 契约是否与后端一致。
 - 最终评估
   - 当前实现不能按“证据一致、文件可追溯、图谱动态更新”口径放行，需要 Claude 继续修正。
+## 15. 第七轮复审结论（基于 `14f65e9`）
+- 审查提交区间：`6d10635..14f65e9`
+- 审查时间：2026-04-03 15:15
+- 已确认修复项
+  - `dependency_candidate.evidence_json` 已补 `per_file` 和带 `file_entry_id` 的 `sample_scripts`。
+  - 正向增量挖掘命中已入图谱边时，`_recalculate_candidate_scores()` 会同步更新 `graph_edge.evidence_json`。
+  - 前端 evidence 类型与候选详情展示已切到 `hit_file_count / total_mined_files / per_file` 新口径。
+  - 复跑 `python -m pytest backend/tests/test_dependency_mining.py -q`，结果 `43 passed`。
+- 发现的问题
+  - P1：`re-mine` 把某个 `graph` 候选当前算法版本下的 contribution 删到 0 时，只会把 `dependency_candidate` 的 `evidence_json` 清空，不会同步清空对应 `graph_edge.evidence_json`。因为 graph edge 同步逻辑只在 `_recalculate_candidate_scores()` 里，而零 contribution 分支不会进入该函数。这会留下“候选 evidence 已空，但图谱边 evidence 仍是旧值”的不一致状态。位置：`backend/plugins/mml_manager/main.py` `re-mine` 零 contribution 分支与 `_recalculate_candidate_scores()` 尾部同步逻辑。
+  - P2：保留兼容的废弃接口 `POST /candidates/generate` 仍然走旧的 `generate_candidates()` 逻辑，会生成 `auto_passed / llm_review / man_review` 这些旧状态，并返回不含 `per_file`、`sample_scripts` 也不带 `file_entry_id` 的旧 evidence 结构。该接口仍是公开路由，当前实现与已确认的新状态机和 evidence 契约不一致。位置：`backend/plugins/mml_manager/main.py` `/candidates/generate` 与 `backend/plugins/mml_manager/candidate_engine.py` `generate_candidates()`。
+- 测试缺口
+  - 新增测试覆盖了候选 evidence 清空、graph edge 正向更新、候选 per-file 明细，但没有覆盖“零 contribution re-mine 后 graph_edge evidence 也应被清空/归零”以及“废弃 `/candidates/generate` 仍符合当前状态/证据契约”。
+- 回归风险
+  - 前端 `npm.cmd run build` 在当前环境下失败于 Vite 配置加载阶段的 `spawn EPERM`，这是环境限制，不足以证明前端构建链完全通过。
+- 最终评估
+  - 当前实现仍不能放行；需先修复以上 1 个 P1，并处理废弃接口的一致性问题。
