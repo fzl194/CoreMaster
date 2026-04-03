@@ -212,3 +212,19 @@
   - 前端 `npm.cmd run build` 在当前环境下失败于 Vite 配置加载阶段的 `spawn EPERM`，这是环境限制，不足以证明前端构建链完全通过。
 - 最终评估
   - 当前实现仍不能放行；需先修复以上 1 个 P1，并处理废弃接口的一致性问题。
+## 16. 第八轮复审结论（基于 `a712579`）
+- 审查提交区间：`cdd3947..a712579`
+- 审查时间：2026-04-03 16:55
+- 已确认修复项
+  - `re-mine` 在 `graph` 候选当前算法版本下零 contribution 时，已同步把对应 `graph_edge.evidence_json` 清空并将 `confidence` 置 0。
+  - 废弃但保留兼容的 `POST /candidates/generate` 已切换到 `pending + review_route` 新状态模型，并返回包含 `hit_file_count / total_mined_files / per_file / sample_scripts.file_entry_id` 的新 evidence 契约。
+  - 新增回归测试已覆盖上述两个场景。
+  - 复跑 `python -m pytest backend/tests/test_dependency_mining.py -q`，结果 `44 passed`。
+- 发现的问题
+  - 本轮未发现新的实现级问题。
+- 测试缺口
+  - 后端当前覆盖已足以支撑本轮修复结论；未额外发现阻塞级缺口。
+- 回归风险
+  - 我尝试执行 `npm.cmd run build`，但当前环境仍在 Vite 配置加载阶段报 `spawn EPERM`。这看起来是环境限制，不像代码错误；但它也意味着我不能在本地独立确认前端构建链通过。
+- 最终评估
+  - 代码层面当前实现已收口，可以放行；仅保留“前端 build 未能在当前环境独立复核”的验证备注。
