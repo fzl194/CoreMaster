@@ -25,12 +25,15 @@
 
 ## 4. 归档路径
 
-- 归档文件按月份放入 `docs/archive/YYYY-MM/`
-- 在归档目录下按原类别保留子目录，例如：
-  - `docs/archive/YYYY-MM/analysis/`
-  - `docs/archive/YYYY-MM/handoffs/`
-  - `docs/archive/YYYY-MM/plans/`
-  - `docs/archive/YYYY-MM/messages/`
+- 归档文件先按月份放入 `docs/archive/YYYY-MM/`
+- 每个已闭环任务在对应月份下创建独立任务目录：`docs/archive/YYYY-MM/<task-id>/`
+- 同一闭环任务的计划、交接、审查、修复、消息、任务级 Agent 摘要应统一收口到该任务目录下
+- 任务目录内再按类别保留子目录，例如：
+  - `docs/archive/YYYY-MM/<task-id>/analysis/`
+  - `docs/archive/YYYY-MM/<task-id>/handoffs/`
+  - `docs/archive/YYYY-MM/<task-id>/plans/`
+  - `docs/archive/YYYY-MM/<task-id>/messages/`
+- 若需要保留任务级 Agent 摘要，放在 `docs/archive/YYYY-MM/<task-id>/AGENT_MESSAGES.md`
 
 ## 5. 执行原则
 

@@ -27,7 +27,7 @@
 - 修复文档：
 - 管理员文档：
 - 最新消息序号：
-- 备注：
+- 备注：相关计划、交接、审查、修复、任务消息与任务级 Agent 摘要均已归档到 docs/archive/2026-04/dep-mining-mvp-001/；代码审查已放行，后端验证为 44 passed，前端 build 仅保留当前环境 spawn EPERM 的非阻塞备注。
 
 字段分权：
 
@@ -57,11 +57,11 @@
 - Claude：已完成增量式依赖挖掘实现，并通过最终复审
 - Codex：已完成最终代码审查、任务关闭与文档归档
 - 管理员：已确认关闭任务并执行归档
-- 计划文档：`docs/archive/2026-04/plans/`
-- 交接文档：`docs/archive/2026-04/handoffs/`
-- 审查文档：`docs/archive/2026-04/analysis/`
-- 修复文档：`docs/archive/2026-04/handoffs/`
+- 计划文档：`docs/archive/2026-04/dep-mining-mvp-001/plans/`
+- 交接文档：`docs/archive/2026-04/dep-mining-mvp-001/handoffs/`
+- 审查文档：`docs/archive/2026-04/dep-mining-mvp-001/analysis/`
+- 修复文档：`docs/archive/2026-04/dep-mining-mvp-001/handoffs/`
 - 管理员文档：
-- 设计参考：`docs/archive/2026-04/plans/2026-04-01-mml-dependency-mining-design.md`
+- 设计参考：`docs/archive/2026-04/dep-mining-mvp-001/plans/2026-04-01-mml-dependency-mining-design.md`
 - 最新消息序号：MSG-20260403-174500-codex
-- 备注：相关计划、交接、审查、修复与任务消息文档均已归档到 `docs/archive/2026-04/`；代码审查已放行，后端验证为 `44 passed`，前端 build 仅保留当前环境 `spawn EPERM` 的非阻塞备注。
+- 备注：相关计划、交接、审查、修复、任务消息与任务级 Agent 摘要均已归档到 docs/archive/2026-04/dep-mining-mvp-001/；代码审查已放行，后端验证为 44 passed，前端 build 仅保留当前环境 spawn EPERM 的非阻塞备注。
