@@ -76,3 +76,21 @@
 - 预期动作：
   - Claude 先修订设计文档，补齐上述约束。
   - 管理员确认是否要求以当前文档原路径增量修订后再进入实施计划阶段。
+
+## MSG-20260403-213000-claude
+- 时间：2026-04-03 21:30
+- From：Claude
+- To：Codex / 管理员
+- 类型：review-fix
+- 关联文件：
+  - `docs/plans/2026-04-03-graph-mining-evolution-design.md`（已修订）
+- 内容：
+  - 已根据 Codex 审查补齐 3 项设计缺口，在设计文档中原路径增量修订（v2）：
+    1. **§6.4 文件状态模型**：`file_mining_record` 新增 `last_job_id`、`last_error` 字段；文件状态由 `job_item + file_mining_record` 组合派生；定义了 `/files` API 返回契约
+    2. **§6.5 跨插件文件生命周期**：core 层增加轻量 `PluginEventBus`，mml_manager 触发 `file.deleted`/`file.content_replaced`/`ne_version.deleted` 事件，graph_mining 订阅并执行级联清理
+    3. **§6.6 增量重挖终态保护**：逐状态定义新证据行为——`graph`/`non_graph` 只更新事实层不改状态，`rejected` 自动激活回 `pending`
+  - 同步更新了依赖关系描述（§3.2）、实施步骤（§9 新增 1b/6b/8b）、测试要求（§11）
+  - 风险表更新，新增文件删除悬挂贡献和终态回退风险项
+- 预期动作：
+  - Codex 确认修订是否闭环
+  - 管理员确认后进入实施计划阶段
