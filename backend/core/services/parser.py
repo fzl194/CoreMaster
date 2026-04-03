@@ -1,6 +1,35 @@
 import re
 from pathlib import Path
 
+# 编码探测优先级：UTF-8(含BOM) → GB18030(GBK/GB2312超集) → Latin-1(兜底)
+_ENCODING_TRIES = ("utf-8-sig", "utf-8", "gb18030", "latin-1")
+
+
+def read_text_auto(path: Path) -> str:
+    """自动探测文件编码并读取文本内容。
+
+    依次尝试 UTF-8(BOM) → UTF-8 → GB18030 → Latin-1，
+    首个不抛 UnicodeDecodeError 的编码即为结果。
+    """
+    raw = path.read_bytes()
+    for enc in _ENCODING_TRIES:
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    # latin-1 永远成功，理论上不会到这里
+    return raw.decode("latin-1")
+
+
+def decode_bytes_auto(data: bytes) -> str:
+    """自动探测 bytes 编码并解码。用于上传文件等场景。"""
+    for enc in _ENCODING_TRIES:
+        try:
+            return data.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return data.decode("latin-1")
+
 
 class ParserService:
     """MML 通用解析器
@@ -35,8 +64,8 @@ class ParserService:
         return result["commands"]
 
     def parse_file(self, path: str) -> list[dict]:
-        """解析 MML 文件，返回命令列表。"""
-        text = Path(path).read_text(encoding="utf-8")
+        """解析 MML 文件，返回命令列表。自动探测文件编码。"""
+        text = read_text_auto(Path(path))
         return self.parse_text(text)
 
     @staticmethod

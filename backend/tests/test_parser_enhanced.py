@@ -275,3 +275,40 @@ def test_parse_report_with_multiline():
     assert report["parsed"] == 1
     # Both lines are consumed; second line joins the first
     assert report["total_lines"] == 2 or report["total_lines"] == 1
+
+
+# ── Encoding Detection ───────────────────────────────────────────────────
+
+
+def test_read_text_auto_detect_gbk(tmp_path):
+    """GBK-encoded MML file should be read correctly via parse_file."""
+    mml_content = 'ADD APN: APN="测试", DESC="中文描述";\n'
+    gbk_file = tmp_path / "gbk_test.mml"
+    gbk_file.write_bytes(mml_content.encode("gbk"))
+    svc = _svc()
+    result = svc.parse_file(str(gbk_file))
+    assert len(result) == 1
+    assert result[0]["params"][0]["value"] == "测试"
+    assert result[0]["params"][1]["value"] == "中文描述"
+
+
+def test_read_text_auto_detect_utf8(tmp_path):
+    """UTF-8 file with BOM should still be parsed correctly."""
+    mml_content = 'ADD APN: APN="test";\n'
+    utf8bom_file = tmp_path / "utf8bom_test.mml"
+    utf8bom_file.write_bytes(b"\xef\xbb\xbf" + mml_content.encode("utf-8"))
+    svc = _svc()
+    result = svc.parse_file(str(utf8bom_file))
+    assert len(result) == 1
+    assert result[0]["params"][0]["value"] == "test"
+
+
+def test_read_text_auto_detect_gb18030(tmp_path):
+    """GB18030-encoded file should be read correctly."""
+    mml_content = 'ADD APN: DESC="描述信息", APN="apn1";\n'
+    gb18030_file = tmp_path / "gb18030_test.mml"
+    gb18030_file.write_bytes(mml_content.encode("gb18030"))
+    svc = _svc()
+    result = svc.parse_file(str(gb18030_file))
+    assert len(result) == 1
+    assert result[0]["params"][0]["value"] == "描述信息"

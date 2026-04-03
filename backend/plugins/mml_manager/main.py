@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Query, Form
 from fastapi.responses import FileResponse, JSONResponse
 from core.plugin.context import PluginContext
-from core.services.parser import ParserService
+from core.services.parser import ParserService, read_text_auto, decode_bytes_auto
 from core.services.database import DatabaseService
 
 # Ensure candidate_engine can be imported
@@ -224,7 +224,7 @@ class Plugin:
 
         @self.router.post("/parse")
         async def parse_mml(file: UploadFile = File(...)):
-            content = (await file.read()).decode("utf-8")
+            content = decode_bytes_auto(await file.read())
             commands = self.parser.parse_text(content)
             return {"commands": commands, "count": len(commands)}
 
@@ -699,7 +699,7 @@ class Plugin:
             p = _safe_file_path(entry["file_path"])
             if p is None or not p.exists():
                 return JSONResponse(status_code=404, content={"detail": "磁盘文件不存在"})
-            content = p.read_text(encoding="utf-8")
+            content = read_text_auto(p)
 
             result = self.parser.parse_text_with_report(content)
             commands = result["commands"]
@@ -1219,7 +1219,7 @@ class Plugin:
                 p = _safe_file_path(entry["file_path"])
                 if p is None or not p.exists():
                     continue
-                content = p.read_text(encoding="utf-8")
+                content = read_text_auto(p)
 
                 result = self.parser.parse_text_with_report(content)
                 commands = result["commands"]
