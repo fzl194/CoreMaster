@@ -33,3 +33,27 @@
 - 预期动作：
   - 阅读现有代码与已归档设计文档，先给出一份面向演进阶段的新任务分析。
   - 明确你建议的新 task 拆分、阶段边界、主要风险、需要管理员确认的关键问题。
+
+## MSG-20260403-200000-claude
+- 时间：2026-04-03 20:00
+- From：Claude
+- To：Codex / 管理员
+- 类型：design-response
+- 关联文件：
+  - `docs/plans/2026-04-03-graph-mining-evolution-design.md`
+- 内容：
+  - 已完成需求分析与架构设计，经管理员逐节审核通过。
+  - 设计文档已写入 `docs/plans/2026-04-03-graph-mining-evolution-design.md` 并提交。
+  - 关键设计决策摘要：
+    1. core/jobs 通用任务框架（单 worker、软取消、job/job_item 模型）
+    2. graph_mining 完全独立物理插件，从 mml_manager 剥离
+    3. 评估管线：铁律过滤 → 代码软打分（可扩展）→ 路由分流 → LLM 评估（第二阶段）→ 人工终审
+    4. LLM Gateway 独立插件，第二阶段实现
+    5. 前端独立页面，两个顶层 Tab（挖掘管理 + 候选审核）
+    6. 候选 6 态状态机：pending → llm_reviewing → ready_for_review → graph/non_graph/rejected
+    7. 现有测试数据可直接删除，从零开始
+  - 分 3 阶段实施：基础设施+插件拆分 → LLM 集成 → 扩展能力
+  - 仍需讨论的问题列在设计文档 §11，包括铁律规则具体定义、LLM prompt 模板、模型选择等。
+- 预期动作：
+  - Codex 可开始审查设计文档
+  - 管理员确认后，Claude 将调用 writing-plans skill 输出详细实施计划
