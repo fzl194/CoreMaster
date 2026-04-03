@@ -408,6 +408,40 @@ async def test_generate_candidates_endpoint(client):
 
 
 @pytest.mark.asyncio
+async def test_generate_endpoint_uses_pending_status_and_new_evidence(client):
+    """废弃 /candidates/generate 接口应输出 pending 状态和新 evidence 契约。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_DEPG", "V100RDEPG")
+    entries, _ = await _upload_file(
+        client, "depg.mml",
+        b'ADD VPN: VPN="dv";\nADD APN: VRFNAME="dv";',
+        ne_id,
+    )
+    await client.post(f"{BASE}/scripts/{entries[0]['id']}/extract-commands")
+
+    resp = await client.post(f"{BASE}/candidates/generate", json={"ne_version_id": ne_id})
+    assert resp.status_code == 200
+    candidates = resp.json()["candidates"]
+    assert len(candidates) >= 1
+
+    for c in candidates:
+        # Status should always be 'pending', not auto_passed/llm_review/man_review
+        assert c["status"] == "pending", f"Expected status=pending, got {c['status']}"
+        # review_route should be set
+        assert "review_route" in c, f"Missing review_route in candidate"
+        # Evidence should use new field names
+        ev = c["evidence"]
+        assert "hit_file_count" in ev, f"Missing hit_file_count in evidence"
+        assert "total_mined_files" in ev, f"Missing total_mined_files in evidence"
+        assert "per_file" in ev, f"Missing per_file in evidence"
+        # sample_scripts should include file_entry_id
+        for s in ev.get("sample_scripts", []):
+            assert "file_entry_id" in s, f"sample_scripts entry missing file_entry_id: {s}"
+        # per_file entries should have file_entry_id
+        for pf in ev["per_file"]:
+            assert "file_entry_id" in pf, f"per_file entry missing file_entry_id: {pf}"
+
+
+@pytest.mark.asyncio
 async def test_list_candidates(client):
     ne_id, _ = await _create_ne_version(client, "huawei", "UPF_LIST", "V100R200")
     resp = await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})
@@ -1106,12 +1140,21 @@ async def test_remine_graph_zero_contribution_clears_evidence(client):
     await client.post(f"{BASE}/files/{file_id}/re-mine")
 
     # Verify graph candidate still exists but evidence is cleared
-    cand_after = (await db.query("SELECT evidence_json, confidence, status FROM dependency_candidate WHERE id=?", (cand_id,)))[0]
+    cand_after = (await db.query("SELECT evidence_json, confidence, status, graph_edge_id FROM dependency_candidate WHERE id=?", (cand_id,)))[0]
     assert cand_after["status"] == "graph"
     assert cand_after["confidence"] == 0.0
     evidence_after = json.loads(cand_after["evidence_json"])
     assert evidence_after == {} or evidence_after.get("hit_count", 0) == 0, \
         f"Evidence should be empty/zeroed after re-mine removes all contributions, got {evidence_after}"
+
+    # Verify graph_edge evidence is also cleared (P1 sync)
+    edge_id = cand_after["graph_edge_id"]
+    assert edge_id is not None
+    edge_after = (await db.query("SELECT evidence_json, confidence FROM graph_edge WHERE id=?", (edge_id,)))[0]
+    edge_evidence = json.loads(edge_after["evidence_json"])
+    assert edge_evidence == {} or edge_evidence.get("hit_count", 0) == 0, \
+        f"graph_edge evidence should also be cleared, got {edge_evidence}"
+    assert edge_after["confidence"] == 0.0
 
 
 @pytest.mark.asyncio

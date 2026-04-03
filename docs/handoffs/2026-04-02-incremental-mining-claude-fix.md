@@ -159,3 +159,33 @@ Codex 第六轮全链路复查确认仍有 4 个问题需要继续修。本轮�
 - `test_candidate_evidence_has_per_file_breakdown`
 
 全量回归 43 passed, 0 failed（含本轮 3 个新测试）。前端 vue-tsc + build 均通过。
+
+## 修订说明（第七轮复审后 — graph_edge 同步 + 废弃接口契约统一）
+
+**日期:** 2026-04-03
+**消息来源:** MSG-20260403-151500-codex
+
+Codex 第七轮复审确认上一轮 4 项修复大部分收口，但残留 2 个问题。
+
+### Fix 7.1: re-mine 零贡献未同步清 graph_edge evidence（P1）
+
+**问题:** re-mine 零贡献分支清了 `dependency_candidate.evidence_json`，但因不走 `_recalculate_candidate_scores()`，对应 `graph_edge.evidence_json` 未被清空，留下图谱边旧脏数据。
+
+**修复:** 在零贡献分支中，查询 `graph_edge_id`，若候选 status 为 `graph` 且有对应 graph_edge，同步清空 `graph_edge.evidence_json` 和 `confidence`。
+
+### Fix 7.2: 废弃接口 `/candidates/generate` 契约漂移（P2）
+
+**问题:** 旧 `generate_candidates()` 仍产出 `auto_passed/llm_review/man_review` 状态和不含 `per_file`/`file_entry_id` 的旧 evidence 结构。
+
+**修复:**
+- `generate_candidates()` 状态统一为 `pending`，审核路由改为 `review_route` 字段（`auto/llm/manual`）
+- evidence 新增 `per_file` 字段和 `sample_scripts` 中的 `file_entry_id`
+- 废弃端点 INSERT/UPDATE 加入 `review_route` 列
+- 端点 SELECT 查询加入 `review_route` 返回
+
+### 新增测试
+
+- `test_remine_graph_zero_contribution_clears_evidence` 扩展验证 graph_edge 同步清空
+- `test_generate_endpoint_uses_pending_status_and_new_evidence` 验证废弃接口新契约
+
+全量回归 44 passed, 0 failed。前端 build 通过。

@@ -838,11 +838,12 @@ class Plugin:
                     await self.db.execute(
                         "INSERT INTO dependency_candidate "
                         "(ne_version_id, ref_command, ref_param, def_command, def_param, "
-                        "status, confidence, scores_json, evidence_json) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "status, confidence, scores_json, evidence_json, review_route) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (ne_version_id, c["ref_command"], c["ref_param"],
                          c["def_command"], c["def_param"], c["status"],
-                         c["confidence"], scores_json, evidence_json),
+                         c["confidence"], scores_json, evidence_json,
+                         c.get("review_route", "manual")),
                     )
                 except Exception:
                     # Unique-key conflict: update scores/evidence but preserve
@@ -854,10 +855,15 @@ class Plugin:
                         "  ELSE ? "
                         "END, "
                         "confidence=?, scores_json=?, evidence_json=?, "
+                        "review_route = CASE "
+                        "  WHEN status IN ('graph', 'non_graph', 'rejected') THEN review_route "
+                        "  ELSE ? "
+                        "END, "
                         "updated_at=CURRENT_TIMESTAMP "
                         "WHERE ne_version_id=? AND ref_command=? AND ref_param=? "
                         "AND def_command=? AND def_param=?",
                         (c["status"], c["confidence"], scores_json, evidence_json,
+                         c.get("review_route", "manual"),
                          ne_version_id, c["ref_command"], c["ref_param"],
                          c["def_command"], c["def_param"]),
                     )
@@ -865,7 +871,7 @@ class Plugin:
                 cand_rows = await self.db.query(
                     "SELECT id, ne_version_id, ref_command, ref_param, def_command, "
                     "def_param, status, confidence, scores_json, evidence_json, "
-                    "created_at, updated_at "
+                    "review_route, created_at, updated_at "
                     "FROM dependency_candidate WHERE ne_version_id=? "
                     "AND ref_command=? AND ref_param=? AND def_command=? AND def_param=?",
                     (ne_version_id, c["ref_command"], c["ref_param"],
@@ -1385,12 +1391,13 @@ class Plugin:
             # Step 3: Recalculate affected candidates' scores and handle zero-contribution
             for cand_id in affected_cand_ids:
                 cand_rows = await self.db.query(
-                    "SELECT id, status FROM dependency_candidate WHERE id=?",
+                    "SELECT id, status, graph_edge_id FROM dependency_candidate WHERE id=?",
                     (cand_id,),
                 )
                 if not cand_rows:
                     continue
                 cand_status = cand_rows[0]["status"]
+                cand_graph_edge_id = cand_rows[0]["graph_edge_id"]
 
                 # Count remaining contributions for active_algorithm_version
                 remaining = await self.db.query(
@@ -1413,6 +1420,13 @@ class Plugin:
                             "evidence_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                             (zero_scores, empty_evidence, cand_id),
                         )
+                        # Sync evidence clear to graph_edge if candidate is in graph
+                        if cand_status == "graph" and cand_graph_edge_id:
+                            await self.db.execute(
+                                "UPDATE graph_edge SET evidence_json=?, confidence=0.0, "
+                                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                                (empty_evidence, cand_graph_edge_id),
+                            )
                     elif cand_status in ("pending", "rejected"):
                         # Delete zero-contribution candidates only if pending/rejected
                         await self.db.execute(

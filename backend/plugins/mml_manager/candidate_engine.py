@@ -100,6 +100,8 @@ def generate_candidates(
                                 "script_ids": set(),
                                 "values": set(),
                                 "sample_lines": [],
+                                "sample_lines_with_file": [],
+                                "per_file": {},
                             }
                         accumulator[key]["script_ids"].add(file_id)
                         accumulator[key]["values"].add(val_i)
@@ -107,6 +109,17 @@ def generate_candidates(
                             accumulator[key]["sample_lines"].append(
                                 (cmd_i.get("line_number"), cmd_j.get("line_number"))
                             )
+                            accumulator[key]["sample_lines_with_file"].append(
+                                (file_id, cmd_i.get("line_number"), cmd_j.get("line_number"))
+                            )
+                        # Track per-file data
+                        if file_id not in accumulator[key]["per_file"]:
+                            accumulator[key]["per_file"][file_id] = {
+                                "hit_count": 0,
+                                "hit_values": set(),
+                            }
+                        accumulator[key]["per_file"][file_id]["hit_count"] += 1
+                        accumulator[key]["per_file"][file_id]["hit_values"].add(val_i)
 
     # Build candidates from accumulator
     candidates = []
@@ -133,21 +146,35 @@ def generate_candidates(
 
         confidence = scores["confidence"]
 
-        # Determine initial status
+        # All candidates start as pending; review_route replaces old status routing
+        status = "pending"
         if confidence >= theta_high:
-            status = "auto_passed"
+            review_route = "auto"
         elif confidence >= theta_low:
-            status = "llm_review"
+            review_route = "llm"
         else:
-            status = "man_review"
+            review_route = "manual"
 
-        # Build sample_scripts
-        sample_lines = data["sample_lines"][:5]
+        # Build sample_scripts with file_entry_id
+        sample_lines_with_file = data["sample_lines_with_file"][:5]
         sample_scripts = []
-        for line_def, line_ref in sample_lines:
+        for fid, line_def, line_ref in sample_lines_with_file:
             sample_scripts.append({
+                "file_entry_id": fid,
                 "def_line": line_def,
                 "ref_line": line_ref,
+            })
+
+        # Build per_file breakdown
+        per_file_list = []
+        for fid, pf_data in data["per_file"].items():
+            pf_sample = [s for s in sample_lines_with_file if s[0] == fid][:5]
+            pf_scripts = [{"def_line": s[1], "ref_line": s[2]} for s in pf_sample]
+            per_file_list.append({
+                "file_entry_id": fid,
+                "hit_count": pf_data["hit_count"],
+                "hit_values": sorted(pf_data["hit_values"]),
+                "sample_scripts": pf_scripts,
             })
 
         # Build counter_examples
@@ -167,6 +194,7 @@ def generate_candidates(
             "def_command": def_cmd,
             "def_param": def_param,
             "status": status,
+            "review_route": review_route,
             "confidence": round(confidence, 4),
             "scores": {
                 "support": round(scores["support"], 4),
@@ -180,6 +208,7 @@ def generate_candidates(
                 "total_mined_files": total_scripts,
                 "hit_values": sorted(data["values"]),
                 "sample_scripts": sample_scripts,
+                "per_file": per_file_list,
             },
         })
 

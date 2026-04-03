@@ -47,7 +47,7 @@
 - 当前阶段：MVP 实现完成，待 Codex 审查
 - Claude：实现完成
 - Codex：已完成第六轮一致性复查，确认仍残留 2 个 P1 与 2 个 P2：re-mine 零贡献 evidence 不清、graph_edge 证据不随增量更新、候选 evidence 丢文件维度、前端 evidence 契约过期。
-- Claude：已修复全部 4 项 evidence 链路问题，43 测试全通过，前端构建通过，待复审。
+- Claude：已修复全部 4 项 evidence 链路问题 + 第七轮 2 项残留（graph_edge 同步 + 废弃接口契约），44 测试全通过，前端构建通过，待复审。
 - 管理员：
 - 计划文档：`docs/plans/2026-04-02-mml-dependency-mining-mvp-impl-plan.md`
 - 交接文档：`docs/handoffs/2026-04-02-dep-mining-mvp-claude-handoff.md`
@@ -55,7 +55,7 @@
 - 修复文档：
 - 管理员文档：
 - 设计参考：`docs/plans/2026-04-01-mml-dependency-mining-design.md`
-- 最新消息序号：MSG-20260403-140000-claude
+- 最新消息序号：MSG-20260403-163000-claude
 - 备注：MVP 实现已完成，含解析器增强、候选生成引擎、审核队列 API、前端视图
 
 ---
