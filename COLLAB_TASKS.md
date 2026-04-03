@@ -40,25 +40,7 @@
 
 ## 活跃任务
 
-### dep-mining-mvp-001
-- 标题：MML 命令依赖关系挖掘系统 MVP
-- 级别：正式
-- 状态：Claude 交接中
-- 当前阶段：MVP 实现完成，待 Codex 审查
-- Claude：实现完成
-- Codex：已完成第六轮一致性复查，确认仍残留 2 个 P1 与 2 个 P2：re-mine 零贡献 evidence 不清、graph_edge 证据不随增量更新、候选 evidence 丢文件维度、前端 evidence 契约过期。
-- Claude：已修复全部 4 项 evidence 链路问题 + 第七轮 2 项残留（graph_edge 同步 + 废弃接口契约），44 测试全通过，前端构建通过，待复审。
-- 管理员：
-- 计划文档：`docs/plans/2026-04-02-mml-dependency-mining-mvp-impl-plan.md`
-- 交接文档：`docs/handoffs/2026-04-02-dep-mining-mvp-claude-handoff.md`
-- 审查文档：`docs/analysis/2026-04-02-dep-mining-mvp-codex-review.md`；`docs/analysis/2026-04-02-dep-mining-mvp-incremental-requirements-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-v2-codex-review.md`；`docs/analysis/2026-04-02-mml-incremental-mining-design-v3-codex-review.md`；`docs/analysis/2026-04-02-incremental-mining-impl-codex-review.md`
-- 修复文档：
-- 管理员文档：
-- 设计参考：`docs/plans/2026-04-01-mml-dependency-mining-design.md`
-- 最新消息序号：MSG-20260403-163000-claude
-- 备注：MVP 实现已完成，含解析器增强、候选生成引擎、审核队列 API、前端视图
-
----
+- 暂无
 
 ## 已完成任务
 
@@ -66,3 +48,20 @@
 
 - 可将已闭环任务移动到此区
 - 如任务较多，可后续按月份拆分归档
+
+### dep-mining-mvp-001
+- 标题：MML 命令依赖关系挖掘系统 MVP
+- 级别：正式
+- 状态：已闭环归档
+- 当前阶段：实现、审查与归档完成
+- Claude：已完成增量式依赖挖掘实现，并通过最终复审
+- Codex：已完成最终代码审查、任务关闭与文档归档
+- 管理员：已确认关闭任务并执行归档
+- 计划文档：`docs/archive/2026-04/plans/`
+- 交接文档：`docs/archive/2026-04/handoffs/`
+- 审查文档：`docs/archive/2026-04/analysis/`
+- 修复文档：`docs/archive/2026-04/handoffs/`
+- 管理员文档：
+- 设计参考：`docs/archive/2026-04/plans/2026-04-01-mml-dependency-mining-design.md`
+- 最新消息序号：MSG-20260403-174500-codex
+- 备注：相关计划、交接、审查、修复与任务消息文档均已归档到 `docs/archive/2026-04/`；代码审查已放行，后端验证为 `44 passed`，前端 build 仅保留当前环境 `spawn EPERM` 的非阻塞备注。

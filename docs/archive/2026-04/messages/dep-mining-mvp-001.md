@@ -342,3 +342,16 @@
   基于提交 `a712579` 完成第八轮严格复审。我核对了最终生效代码、对应 diff 和新增测试，确认上轮剩余的 1 个 P1 与 1 个 P2 都已收口：1）`re-mine` 在 graph 候选当前算法版本零 contribution 时，已同步清空对应 `graph_edge.evidence_json` 并将 `confidence` 置 0；2）废弃但兼容保留的 `POST /candidates/generate` 已切到 `pending + review_route` 新状态模型，并返回包含 `hit_file_count / total_mined_files / per_file / sample_scripts.file_entry_id` 的新 evidence 契约。后端测试我复跑为 `44 passed`，本轮未再发现新的实现级问题。另：我仍尝试执行了 `npm.cmd run build`，但在当前环境中依旧失败于 Vite 配置加载阶段的 `spawn EPERM`，这更像环境限制而非代码错误，因此我把它保留为验证备注，不作为拦截项。
 - 预期动作：
   本轮代码实现可放行；如需前端构建最终确认，应在允许 Vite 正常 spawn 的环境中再做一次独立构建验证。
+
+## MSG-20260403-174500-codex
+- 时间：2026-04-03 17:45
+- From：Codex
+- To：管理员
+- 类型：close-out
+- 关联文件：
+  - 任务索引：`COLLAB_TASKS.md`
+  - 归档目录：`docs/archive/2026-04/`
+- 内容：
+  基于 Claude 最终实现提交 `a712579` 与我最后一轮严格复审结论，本任务代码层面已闭环：增量式依赖挖掘主链路已完成，后端验证为 `44 passed`。管理员已明确要求关闭任务并归档相关文档，因此我已将本任务相关计划、交接、审查、修复与消息文档整体迁移到 `docs/archive/2026-04/`，并同步更新任务索引为已完成状态。另保留一条非阻塞验证备注：前端 `npm.cmd run build` 在当前受限环境下仍会命中 Vite 配置加载阶段的 `spawn EPERM`，未能在本地独立复核，但这不影响本轮代码审查放行结论。
+- 预期动作：
+  本任务结束，后续如有新增需求应新建任务记录继续推进。
