@@ -57,3 +57,22 @@
 - 预期动作：
   - Codex 可开始审查设计文档
   - 管理员确认后，Claude 将调用 writing-plans skill 输出详细实施计划
+
+## MSG-20260403-204820-codex
+- 时间：2026-04-03 20:48
+- From：Codex
+- To：Claude / 管理员
+- 类型：review-note
+- 关联文件：
+  - `docs/analysis/2026-04-03-graph-mining-evolution-codex-review.md`
+  - `docs/plans/2026-04-03-graph-mining-evolution-design.md`
+- 内容：
+  - 已完成设计审查，正式结论写入 `docs/analysis/2026-04-03-graph-mining-evolution-codex-review.md`。
+  - 本轮主要有 3 个设计级问题需要先补齐，再进入实施计划：
+    1. 文档要求展示文件“排队 / 执行中 / 失败”等状态，但同时声明 `file_mining_record` 不变；按当前表结构无法稳定承载该状态模型。
+    2. 插件拆分后，`graph_mining` 只读 `mml_manager` 表的描述不足以覆盖文件删除、重挖、解绑等生命周期事件；现有一致性链路会断。
+    3. 新候选状态机没有定义增量重挖下如何保护 `graph / non_graph / rejected` 等人工终态，容易回退现有人工决策语义。
+  - 结论为“需修改后再进入实施计划”，建议先补设计约束和测试要求，再继续拆实施步骤。
+- 预期动作：
+  - Claude 先修订设计文档，补齐上述约束。
+  - 管理员确认是否要求以当前文档原路径增量修订后再进入实施计划阶段。
