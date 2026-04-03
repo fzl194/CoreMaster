@@ -1,10 +1,12 @@
 # 图谱挖掘体系演进设计
 
-> 状态：已批准
+> 状态：已批准（含审查修订）
 > 日期：2026-04-03
 > 前序任务：`dep-mining-mvp-001`（已闭环归档）
 > 任务 ID：`graph-mining-evolution-001`
-> 修订说明：初始版本，经管理员逐节审核通过
+> 修订说明：
+> - v1：初始版本，经管理员逐节审核通过
+> - v2：根据 Codex 审查补齐 3 项设计缺口（文件状态模型、跨插件生命周期、增量重挖终态保护）
 
 ## 1. 背景与目标
 
@@ -80,16 +82,18 @@ backend/
 ```
 graph_mining → core.services (database, parser)
 graph_mining → core.jobs (任务框架)
+graph_mining → core.events (订阅文件生命周期事件，见 §6.5)
 graph_mining → llm_gateway (通过 ServiceRegistry 获取 LLM 服务)
 
 llm_gateway → core.services (database)
 llm_gateway 不依赖 graph_mining
 
 mml_manager → core.services (database, parser)
+mml_manager → core.events (触发文件生命周期事件)
 mml_manager 不依赖 graph_mining
 ```
 
-graph_mining 通过共享数据库只读访问 mml_manager 的 `file_entry`、`command_instance`、`ne_version` 表，不走 HTTP API。
+graph_mining 通过共享数据库只读访问 mml_manager 的 `file_entry`、`command_instance`、`ne_version` 表，不走 HTTP API。文件删除/替换等生命周期事件通过 core.events 通知 graph_mining 执行级联清理（见 §6.5）。
 
 ## 4. 通用任务框架（core/jobs）
 
@@ -301,7 +305,7 @@ class DependencyVerificationRule(LLMReviewRule):
 **graph_mining 管理（从 mml_manager 迁移 + 演进）：**
 - `dependency_candidate` — 候选记录（status 扩展为 6 种，新增 `llm_assessment_json`）
 - `candidate_contribution` — 文件级贡献（不变）
-- `file_mining_record` — 文件挖掘状态（不变）
+- `file_mining_record` — 文件挖掘状态（演进，见 §6.4）
 - `graph_edge` — 图谱边（不变）
 - `graph_changelog` — 变更日志（不变）
 
@@ -323,6 +327,104 @@ ALTER TABLE dependency_candidate ADD COLUMN llm_assessment_json TEXT;
 -- status 枚举扩展为 6 种：
 --   pending | llm_reviewing | ready_for_review | graph | non_graph | rejected
 ```
+
+### 6.4 文件状态模型（审查修订）
+
+`file_mining_record` 需要演进以承载异步任务场景下的文件级状态。新增 `last_job_id` 和 `last_error` 字段：
+
+```sql
+-- file_mining_record 演进
+ALTER TABLE file_mining_record ADD COLUMN last_job_id INTEGER;
+ALTER TABLE file_mining_record ADD COLUMN last_error TEXT;
+-- last_job_id: 关联最近一次处理该文件的 job（FK job.id）
+-- last_error: 最近一次失败的错误信息
+```
+
+**文件状态派生规则**（API 层组合查询，不存冗余状态）：
+
+| 文件状态 | 派生条件 |
+|----------|----------|
+| 未挖掘 | `file_mining_record` 不存在 |
+| 排队中 | 存在 `job_item` 且 `status='pending'`，通过 `item_key=file_entry_id` 关联 |
+| 挖掘中 | 存在 `job_item` 且 `status='running'` |
+| 已完成 | `file_mining_record.mined=1` 且无活跃 `job_item` |
+| 失败 | 最近 `job_item` 的 `status='failed'`，且 `file_mining_record.mined=0` |
+
+**`/files` API 返回契约**：
+
+```json
+{
+  "file_id": 42,
+  "name": "cfg_apn_03.mml",
+  "mining_status": "completed",  // unmined | queued | running | completed | failed
+  "last_job_id": 3,
+  "last_error": null,
+  "mined_at": "2026-04-03T20:30:00",
+  "command_count": 15
+}
+```
+
+### 6.5 跨插件文件生命周期事件（审查修订）
+
+**问题**：文件删除、内容替换、版本解绑等操作发生在 `mml_manager`，但关联的 `candidate_contribution`、`dependency_candidate`、`graph_edge` 数据归 `graph_mining` 管理。"只读依赖"不足以保证一致性。
+
+**方案：core 层轻量事件 hook 机制**
+
+```python
+# core/plugin/events.py
+class PluginEventBus:
+    """轻量级插件间事件通知。同步调用，不跨进程。"""
+
+    def on(self, event_type: str, handler: Callable) -> None:
+        """注册事件处理器。"""
+        ...
+
+    async def emit(self, event_type: str, payload: dict) -> None:
+        """触发事件，按注册顺序调用所有处理器。"""
+        ...
+```
+
+**事件类型与数据流**：
+
+| 事件 | 触发方 | payload | 订阅方处理 |
+|------|--------|---------|-----------|
+| `file.deleted` | mml_manager | `{file_entry_id, ne_version_id}` | graph_mining 删除该文件的 contribution、重算候选、清理零贡献候选 |
+| `file.content_replaced` | mml_manager | `{file_entry_id, ne_version_id}` | graph_mining 删除旧 contribution、触发该文件在 graph_mining 层面的重算 |
+| `ne_version.deleted` | mml_manager | `{ne_version_id}` | graph_mining 级联删除该版本所有挖掘数据 |
+
+**依赖方向**：mml_manager 依赖 core.events（无方向变化）。graph_mining 依赖 core.events（注册 handler）。mml_manager 不依赖 graph_mining。
+
+**第一阶段实现约束**：
+- 事件 handler 同步执行（在 mml_manager 的请求处理上下文中）
+- 如果 handler 失败，记录错误但不阻塞 mml_manager 的主操作
+- 不做事件持久化、不做异步队列、不做重试
+
+### 6.6 增量重挖与人工终态保护规则（审查修订）
+
+**核心原则：新证据只更新事实层，不自动覆盖人工决策。**
+
+当增量挖掘产出的候选与已有 `dependency_candidate` 匹配时，按当前状态分支处理：
+
+| 当前状态 | 新证据到来时的行为 |
+|----------|-------------------|
+| `pending` | 更新 contribution，重算汇总分，可能更新 review_route |
+| `llm_reviewing` | 更新 contribution（事实层），不中断 LLM 评估流程。汇总分在 LLM 完成后重算 |
+| `ready_for_review` | 更新 contribution，重算汇总分。如果 LLM 曾评估过，标记 `llm_assessment_json` 为 stale（供人工参考） |
+| `graph` | 写入 contribution（事实层保留），汇总分更新供查看。**状态不变**，`graph_edge` 不动 |
+| `non_graph` | 写入 contribution（作为追溯依据保留），汇总分更新。**状态不变** |
+| `rejected` | 写入 contribution，重算汇总分。**状态自动激活回 `pending`**（新证据可再进池），按新置信度重设 `review_route` |
+
+**铁律**：
+- `graph` / `non_graph` 是人工终态，新证据不自动改变状态
+- `rejected` 可被新证据激活，这是唯一会被自动改变的人工终态
+- `graph` / `non_graph` 即使零贡献也永不自动删除候选记录
+- 若需将 `graph` 改为 `non_graph`，必须先 revert 到 `pending`，再走正常审核流程
+
+**测试要求**（第一阶段必须覆盖）：
+1. 已 `graph` 候选在重挖后状态不变、贡献更新
+2. 已 `non_graph` 候选在新证据后状态不变、贡献记录
+3. 已 `rejected` 候选在新证据后自动激活回 `pending`
+4. 零贡献的 `graph` / `non_graph` 候选不被自动删除
 
 ## 7. API 设计
 
@@ -445,13 +547,16 @@ ALTER TABLE dependency_candidate ADD COLUMN llm_assessment_json TEXT;
 | 步骤 | 内容 | 预估粒度 |
 |------|------|----------|
 | 1 | core/jobs 通用任务框架（模型 + 服务 + worker） | 基础设施 |
-| 2 | graph_mining 独立插件骨架（plugin.toml + 路由注册 + 表建建删） | 骨架搭建 |
+| 1b | core/events 轻量事件 hook 机制 | 基础设施 |
+| 2 | graph_mining 独立插件骨架（plugin.toml + 路由注册 + 表建删 + file_mining_record 演进） | 骨架搭建 |
 | 3 | 从 mml_manager 迁移挖掘相关代码到 graph_mining | 代码迁移 |
-| 4 | 瘦身 mml_manager（删除已迁移的挖掘代码） | 清理 |
+| 4 | 瘦身 mml_manager（删除已迁移的挖掘代码，加入事件触发点） | 清理 |
 | 5 | 评估管线重构（hard_rules + scorers + pipeline） | 管线重构 |
-| 6 | 挖掘 worker：接入 core/jobs 框架 | worker 接入 |
-| 7 | 前端：挖掘管理 tab | 前端开发 |
+| 6 | 挖掘 worker：接入 core/jobs 框架 + 增量重挖终态保护 | worker 接入 |
+| 6b | graph_mining 注册文件生命周期事件 handler（清理/重算） | 跨插件集成 |
+| 7 | 前端：挖掘管理 tab（含文件状态派生查询） | 前端开发 |
 | 8 | 前端：候选审核 tab | 前端开发 |
+| 8b | §11 测试用例全覆盖 | 测试 |
 
 ### 第二阶段：LLM 集成
 
@@ -478,8 +583,29 @@ ALTER TABLE dependency_candidate ADD COLUMN llm_assessment_json TEXT;
 |------|------|----------|
 | 通用任务框架过度设计 | 第一阶段耗时增加 | 严格限制：单 worker、无优先级、无重试 |
 | 评估管线接口不稳定 | 已有评分器需要重写 | 第一阶段先把现有 candidate_engine 逻辑原样搬入管线，再逐步重构 |
-| graph_mining 读取 mml_manager 表的耦合 | 跨插件数据依赖 | 共享数据库 + 文档化只读依赖，不走 API |
+| graph_mining 读取 mml_manager 表的耦合 | 跨插件数据依赖 | 共享数据库 + 文档化只读依赖 + 事件 hook 通知（§6.5） |
 | 前端改动范围大 | 开发周期长 | 分两个 tab 独立开发，挖掘管理优先 |
+| 文件删除后悬挂贡献 | 数据一致性 | 核心事件 hook 机制（§6.5），handler 失败记错误不阻塞 |
+| 增量重挖覆盖人工终态 | 人工决策被自动回退 | 严格终态保护规则（§6.6），回归测试覆盖 |
+
+## 11. 第一阶段测试要求
+
+### 11.1 必须通过的测试
+
+1. **job 取消后状态一致性**：cancel job → job_item 全部 skipped 或 completed/failed，文件状态正确回退
+2. **文件删除触发 graph_mining 清理**：删除文件 → contribution 被清理 → 受影响候选分数重算
+3. **已审核候选在增量重挖后保持终态**：
+   - `graph` 候选重挖后状态不变，贡献更新
+   - `non_graph` 候选新证据后状态不变
+   - `rejected` 候选新证据后激活回 `pending`
+4. **零贡献终态候选不被删除**：`graph`/`non_graph` 零贡献时记录保留
+5. **文件状态派生正确**：前端 `/files` API 返回的状态与 job_item + file_mining_record 组合一致
+
+### 11.2 前端联调验收标准
+
+- 文件列表状态与任务中心进度始终一致
+- 同一文件不会在文件列表显示"未挖掘"同时任务中心显示"已完成"
+- 取消任务后，已处理文件保持"已完成"，未处理文件回退到"未挖掘"
 
 ## 11. 仍需讨论的问题
 
