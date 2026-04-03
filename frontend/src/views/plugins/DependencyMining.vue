@@ -157,11 +157,18 @@
           </n-grid>
 
           <n-divider>证据</n-divider>
-          <p>命中脚本数：{{ selectedCandidate.evidence.hit_count }} / {{ selectedCandidate.evidence.total_scripts }}</p>
+          <p>命中次数：{{ selectedCandidate.evidence.hit_count }}（跨 {{ selectedCandidate.evidence.hit_file_count }} / {{ selectedCandidate.evidence.total_mined_files }} 个文件）</p>
           <p style="margin-top: 8px">匹配值：</p>
           <n-space size="small">
             <n-tag v-for="v in selectedCandidate.evidence.hit_values.slice(0, 15)" :key="v" size="small">{{ v }}</n-tag>
           </n-space>
+          <template v-if="selectedCandidate.evidence.per_file && selectedCandidate.evidence.per_file.length > 0">
+            <p style="margin-top: 12px">文件级明细：</p>
+            <n-descriptions v-for="pf in selectedCandidate.evidence.per_file" :key="pf.file_entry_id" :column="2" size="small" bordered style="margin-bottom: 4px">
+              <n-descriptions-item label="文件 ID">{{ pf.file_entry_id }}</n-descriptions-item>
+              <n-descriptions-item label="命中次数">{{ pf.hit_count }}</n-descriptions-item>
+            </n-descriptions>
+          </template>
         </template>
       </n-drawer-content>
     </n-drawer>

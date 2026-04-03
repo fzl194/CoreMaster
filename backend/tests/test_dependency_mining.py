@@ -1080,3 +1080,96 @@ async def test_mine_mixed_new_and_already_mined_files(client):
 
     # Support should still be 1/2 = 0.5 (file 1 hit, file 2 no hit), not 1/3
     assert abs(scores["support"] - 0.5) < 0.01, f"Expected support ≈ 0.5, got {scores['support']}"
+
+
+@pytest.mark.asyncio
+async def test_remine_graph_zero_contribution_clears_evidence(client):
+    """re-mine 删掉唯一贡献后，graph 候选的 evidence_json 应被清空。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_REME", "V_REME")
+    entries, _ = await _upload_file(client, "reme.mml", b'ADD VPN: VPN="v1";\nADD APN: VRFNAME="v1";', ne_id)
+    file_id = entries[0]["id"]
+
+    # Mine and accept
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [file_id]})
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    cand_id = cands[0]["id"]
+    await client.post(f"{BASE}/candidates/{cand_id}/accept", json={"reviewer": "admin"})
+
+    # Verify evidence is populated before re-mine
+    db = client._transport.app.state.registry.get(DatabaseService)
+    cand_before = (await db.query("SELECT evidence_json FROM dependency_candidate WHERE id=?", (cand_id,)))[0]
+    evidence_before = json.loads(cand_before["evidence_json"])
+    assert evidence_before.get("hit_count", 0) > 0, "Evidence should be populated before re-mine"
+
+    # Update file content to have no matches, then re-mine
+    await client.put(f"{BASE}/files/{file_id}/content", json={"content": "ADD EQM: EQMID=\"empty\";\n"})
+    await client.post(f"{BASE}/files/{file_id}/re-mine")
+
+    # Verify graph candidate still exists but evidence is cleared
+    cand_after = (await db.query("SELECT evidence_json, confidence, status FROM dependency_candidate WHERE id=?", (cand_id,)))[0]
+    assert cand_after["status"] == "graph"
+    assert cand_after["confidence"] == 0.0
+    evidence_after = json.loads(cand_after["evidence_json"])
+    assert evidence_after == {} or evidence_after.get("hit_count", 0) == 0, \
+        f"Evidence should be empty/zeroed after re-mine removes all contributions, got {evidence_after}"
+
+
+@pytest.mark.asyncio
+async def test_graph_edge_evidence_updates_on_incremental_mine(client):
+    """增量挖掘新文件后，graph_edge.evidence_json 应同步更新。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_GEDGE", "V_GEDGE")
+
+    # File 1: VPN-APN match
+    entries1, _ = await _upload_file(client, "gedge1.mml", b'ADD VPN: VPN="vx";\nADD APN: VRFNAME="vx";', ne_id)
+
+    # Mine file 1 and accept
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries1[0]["id"]]})
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    cand_id = cands[0]["id"]
+    accept_resp = await client.post(f"{BASE}/candidates/{cand_id}/accept", json={"reviewer": "admin"})
+    edge_id = accept_resp.json()["graph_edge_id"]
+
+    # Check graph_edge evidence after accept
+    db = client._transport.app.state.registry.get(DatabaseService)
+    edge_before = (await db.query("SELECT evidence_json FROM graph_edge WHERE id=?", (edge_id,)))[0]
+    evidence_before = json.loads(edge_before["evidence_json"])
+    assert evidence_before.get("hit_count", 0) == 1
+
+    # File 2: same VPN-APN match (adds new evidence)
+    entries2, _ = await _upload_file(client, "gedge2.mml", b'ADD VPN: VPN="vx";\nADD APN: VRFNAME="vx";', ne_id)
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries2[0]["id"]]})
+
+    # graph_edge evidence should be updated with new contribution
+    edge_after = (await db.query("SELECT evidence_json FROM graph_edge WHERE id=?", (edge_id,)))[0]
+    evidence_after = json.loads(edge_after["evidence_json"])
+    assert evidence_after.get("hit_count", 0) >= 2, \
+        f"graph_edge evidence should reflect new hit, got hit_count={evidence_after.get('hit_count')}"
+
+
+@pytest.mark.asyncio
+async def test_candidate_evidence_has_per_file_breakdown(client):
+    """候选 evidence 应包含文件维度，审核员能看到样例来自哪个文件。"""
+    ne_id, _ = await _create_ne_version(client, "huawei", "UPF_PFILE", "V_PFILE")
+
+    # Two files with same dependency
+    entries1, _ = await _upload_file(client, "pf1.mml", b'ADD VPN: VPN="vv";\nADD APN: VRFNAME="vv";', ne_id)
+    entries2, _ = await _upload_file(client, "pf2.mml", b'ADD VPN: VPN="vv";\nADD APN: VRFNAME="vv";', ne_id)
+
+    await client.post(f"{BASE}/files/mine", json={"file_ids": [entries1[0]["id"], entries2[0]["id"]]})
+
+    cands = (await client.get(f"{BASE}/candidates", params={"ne_version_id": ne_id})).json()
+    assert len(cands) >= 1
+    cand = cands[0]
+    evidence = json.loads(cand["evidence_json"]) if isinstance(cand["evidence_json"], str) else cand["evidence_json"]
+
+    # Evidence should have per_file breakdown with file_entry_id
+    assert "per_file" in evidence, f"Missing per_file in evidence: {evidence}"
+    assert len(evidence["per_file"]) == 2, f"Expected 2 file entries, got {len(evidence['per_file'])}"
+    # Each per_file entry should identify the file
+    for pf in evidence["per_file"]:
+        assert "file_entry_id" in pf, f"per_file entry missing file_entry_id: {pf}"
+        assert "hit_count" in pf, f"per_file entry missing hit_count: {pf}"
+
+    # sample_scripts should include file_entry_id
+    for s in evidence.get("sample_scripts", []):
+        assert "file_entry_id" in s, f"sample_scripts entry missing file_entry_id: {s}"

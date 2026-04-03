@@ -108,3 +108,54 @@ Codex 第三轮复审指出候选生成存在更深层的统计语义偏差，6 
 - `test_mine_support_uses_total_files` — API 级别 support = 2/3 验证
 
 全量回归 119 passed, 0 failed（提交 `3a2adcc`）。
+
+## 修订说明（第六轮复审后 — evidence 全链路收口）
+
+**日期:** 2026-04-03
+**消息来源:** MSG-20260403-113000-codex
+
+Codex 第六轮全链路复查确认仍有 4 个问题需要继续修。本轮一次性收口 evidence 事实层、候选聚合层和前端展示口径。
+
+### Fix 6.1: re-mine 零贡献未清 evidence_json
+
+**问题:** re-mine 删除当前算法版本 contribution 后，若 graph/non_graph 候选剩余贡献为 0，代码只清 `confidence/scores_json`，没同步清 `evidence_json`，留下旧 evidence 脏数据。
+
+**修复:** 在零贡献 UPDATE 语句中加入 `evidence_json='{}'`。
+
+**测试:** 新增 `test_remine_graph_zero_contribution_clears_evidence`。
+
+### Fix 6.2: graph_edge 证据不随增量更新
+
+**问题:** `graph_edge.evidence_json` 只在 accept 时写入，后续增量挖掘命中同一条已入图谱边时不会同步更新。
+
+**修复:** 在 `_recalculate_candidate_scores()` 末尾，若候选 status 为 `graph` 且有 `graph_edge_id`，同步更新对应 `graph_edge` 的 `evidence_json` 和 `confidence`。
+
+**测试:** 新增 `test_graph_edge_evidence_updates_on_incremental_mine`。
+
+### Fix 6.3: 候选 evidence 丢文件维度
+
+**问题:** 候选级 `dependency_candidate.evidence_json` 的 `sample_scripts` 扁平化后无文件标识，审核员无法区分样例来自哪个文件。
+
+**修复:**
+- 贡献查询加 `file_entry_id`
+- `sample_scripts` 每条记录加入 `file_entry_id`
+- 新增 `per_file` 字段，包含每个文件的 `file_entry_id`、`hit_count`、`hit_values`、`sample_scripts`
+
+**测试:** 新增 `test_candidate_evidence_has_per_file_breakdown`。
+
+### Fix 6.4: 前端 evidence 契约过期
+
+**问题:** 前端 TypeScript `CandidateEvidence` 接口仍用 `total_scripts/counter_examples`，而后端已改为 `hit_file_count/total_mined_files`。
+
+**修复:**
+- `candidate_engine.py` 的 `generate_candidates()` 旧路径 evidence 格式对齐新口径
+- 前端 `CandidateEvidence` 接口更新为 `hit_file_count/total_mined_files/per_file`
+- Vue 页面展示改为"命中次数（跨 x/y 个文件）"，新增文件级明细展示
+
+### 新增测试
+
+- `test_remine_graph_zero_contribution_clears_evidence`
+- `test_graph_edge_evidence_updates_on_incremental_mine`
+- `test_candidate_evidence_has_per_file_breakdown`
+
+全量回归 43 passed, 0 failed（含本轮 3 个新测试）。前端 vue-tsc + build 均通过。

@@ -1407,10 +1407,11 @@ class Plugin:
                             "support": 0.0, "distinctiveness": 0.0,
                             "order_consistency": 0.0, "name_relevance": 0.0,
                         }, ensure_ascii=False)
+                        empty_evidence = json.dumps({}, ensure_ascii=False)
                         await self.db.execute(
                             "UPDATE dependency_candidate SET confidence=0.0, scores_json=?, "
-                            "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                            (zero_scores, cand_id),
+                            "evidence_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                            (zero_scores, empty_evidence, cand_id),
                         )
                     elif cand_status in ("pending", "rejected"):
                         # Delete zero-contribution candidates only if pending/rejected
@@ -1466,7 +1467,7 @@ class Plugin:
         from candidate_engine import aggregate_contributions
 
         contribs = await self.db.query(
-            "SELECT scores_json, evidence_json FROM candidate_contribution "
+            "SELECT file_entry_id, scores_json, evidence_json FROM candidate_contribution "
             "WHERE candidate_id=? AND algorithm_version=?",
             (cand_id, alg_ver),
         )
@@ -1495,7 +1496,9 @@ class Plugin:
         total_hit_count = 0
         contrib_list = []
         all_evidence = []
+        per_file_data = []
         for c in contribs:
+            file_entry_id = c["file_entry_id"]
             scores = json.loads(c["scores_json"])
             evidence = json.loads(c["evidence_json"])
             hit_count = evidence.get("hit_count", 1)
@@ -1510,6 +1513,12 @@ class Plugin:
                 "sample_scripts": evidence.get("sample_scripts", []),
             })
             all_evidence.append(evidence)
+            per_file_data.append({
+                "file_entry_id": file_entry_id,
+                "hit_count": hit_count,
+                "hit_values": evidence.get("hit_values", []),
+                "sample_scripts": evidence.get("sample_scripts", []),
+            })
 
         # Add placeholder contributions for files without hits (for correct support)
         no_hit_count = max(0, total_mined_files - hit_file_count)
@@ -1536,9 +1545,12 @@ class Plugin:
                 all_values.add(vals)
 
         all_scripts = []
-        for ev in all_evidence:
-            for s in ev.get("sample_scripts", []):
-                all_scripts.append(s)
+        for pf in per_file_data:
+            for s in pf["sample_scripts"]:
+                all_scripts.append({
+                    "file_entry_id": pf["file_entry_id"],
+                    **s,
+                })
 
         new_evidence = {
             "hit_count": total_hit_count,
@@ -1546,6 +1558,7 @@ class Plugin:
             "total_mined_files": total_mined_files,
             "hit_values": sorted(all_values),
             "sample_scripts": all_scripts[:10],
+            "per_file": per_file_data,
         }
 
         new_scores = {
@@ -1563,3 +1576,19 @@ class Plugin:
              json.dumps(new_evidence, ensure_ascii=False),
              cand_id),
         )
+
+        # Sync evidence to graph_edge if candidate is in graph status
+        cand_status_row = await self.db.query(
+            "SELECT status, graph_edge_id FROM dependency_candidate WHERE id=?",
+            (cand_id,),
+        )
+        if cand_status_row:
+            cs = cand_status_row[0]
+            if cs["status"] == "graph" and cs["graph_edge_id"]:
+                await self.db.execute(
+                    "UPDATE graph_edge SET evidence_json=?, confidence=?, "
+                    "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (json.dumps(new_evidence, ensure_ascii=False),
+                     aggregated["confidence"],
+                     cs["graph_edge_id"]),
+                )

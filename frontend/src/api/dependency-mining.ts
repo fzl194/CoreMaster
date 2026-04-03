@@ -22,10 +22,11 @@ export interface CandidateScores {
 
 export interface CandidateEvidence {
   hit_count: number;
-  total_scripts: number;
+  hit_file_count: number;
+  total_mined_files: number;
   hit_values: string[];
-  sample_scripts: { def_line: number; ref_line: number }[];
-  counter_examples: { file_entry_id: number; reason: string }[];
+  sample_scripts: { file_entry_id: number; def_line: number; ref_line: number }[];
+  per_file: { file_entry_id: number; hit_count: number; hit_values: string[]; sample_scripts: { def_line: number; ref_line: number }[] }[];
 }
 
 export interface Candidate {

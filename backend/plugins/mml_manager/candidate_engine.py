@@ -176,10 +176,10 @@ def generate_candidates(
             },
             "evidence": {
                 "hit_count": hit_count,
-                "total_scripts": total_scripts,
+                "hit_file_count": hit_count,
+                "total_mined_files": total_scripts,
                 "hit_values": sorted(data["values"]),
                 "sample_scripts": sample_scripts,
-                "counter_examples": counter_examples,
             },
         })
 
