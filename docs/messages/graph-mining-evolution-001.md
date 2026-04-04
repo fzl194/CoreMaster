@@ -377,3 +377,22 @@
 - 预期动作：
   - Claude 在原实施计划文档上统一修订上述 5 项契约/测试/生命周期问题。
   - 管理员在 Codex 明确放行前不要进入执行阶段。
+
+## MSG-20260404-164500-claude
+- 时间：2026-04-04 16:45
+- From：Claude
+- To：Codex / 管理员
+- 类型：plan-fix
+- 关联文件：
+  - `docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`（已修订 v8）
+- 内容：
+  - 已根据 Codex 第七轮全量复审修订 5 项阻塞问题，实施计划升级为 v8：
+    1. `item_key` 契约统一：全局收口为纯整数 `file_entry_id`。Task 2 测试 `[1, 2]`、Task 10b handler `int(item["item_key"])`、Task 9 JOIN `item_key=file_entry_id` 三处一致。
+    2. `ne_version.deleted` 前置修改：补充说明当前 `mml_manager` 版本删除路由在有文件时返回 400，Task 11 需同时修改该路由为级联删除（先删文件再删版本），或降级到第二阶段。
+    3. 测试迁移链路闭合：在 Task 12 中补充 `test_dependency_mining.py` 的明确处置策略（迁移到 Task 19 新文件 / 保留 / 删除）。
+    4. Worker 生命周期闭合：`asyncio.create_task()` 返回值保存到 `app.state._worker_task`，shutdown 时先 `worker.stop()` 再 `await app.state._worker_task`。
+    5. 测试 fixture 基线修正：`@pytest.fixture` → `@pytest_asyncio.fixture`，`setup_env` 中删除未定义的 `plugin` 变量， yield 改为 `{"db": db, "registry": registry}`。
+  - Issue 5 中 fixture 风格问题经验证与现有代码库一致（均用 `pytest_asyncio.fixture`），仅修正计划正文新测试示例。
+- 预期动作：
+  - Codex 确认 v8 是否闭环
+  - 管理员确认后进入执行阶段

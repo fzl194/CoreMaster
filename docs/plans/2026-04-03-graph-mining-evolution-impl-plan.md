@@ -149,9 +149,9 @@ git commit -m "[claude]: add core/jobs data models with enums and SQL schema"
 追加到 `test_core_jobs.py`:
 
 ```python
-import pytest
+import pytest_asyncio
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def job_db(tmp_path):
     """创建临时数据库并初始化 job 表"""
     from core.services.database import DatabaseService
@@ -170,7 +170,7 @@ async def job_db(tmp_path):
 async def test_create_job(job_db):
     from core.jobs.service import JobService
     svc = JobService(job_db)
-    job_id = await svc.create_job("mining", {"file_ids": [1, 2]}, ["file:1", "file:2"])
+    job_id = await svc.create_job("mining", {"file_ids": [1, 2]}, [1, 2])
     assert job_id > 0
 
     job = await svc.get_job(job_id)
@@ -201,7 +201,7 @@ async def test_cancel_job(job_db):
 async def test_update_item_status(job_db):
     from core.jobs.service import JobService
     svc = JobService(job_db)
-    job_id = await svc.create_job("mining", {}, ["file:1"])
+    job_id = await svc.create_job("mining", {}, [1])
     items = await svc.get_job_items(job_id)
     item_id = items[0]["id"]
 
@@ -641,13 +641,14 @@ app.state.event_bus = event_bus
 # 在所有插件加载完成后（yield 之前）启动 worker
 # 注意：放在插件加载循环之后，确保 handler 已全部注册
 import asyncio
-asyncio.create_task(worker.start())
+app.state._worker_task = asyncio.create_task(worker.start())
 ```
 
 在清理阶段（yield 之后）添加：
 
 ```python
 await worker.stop()
+await app.state._worker_task  # 等待后台 worker task 完全退出
 ```
 
 **Step 2: 验证 lifespan 启动与服务注册**
@@ -1189,7 +1190,7 @@ class MiningWorker:
             if fresh_job["status"] == "cancelled":
                 break
 
-            file_id = int(item["item_key"].replace("file:", ""))
+            file_id = int(item["item_key"])
             await self.job_service.update_item_status(item["id"], "running")
 
             try:
@@ -1273,7 +1274,9 @@ await self.event_bus.emit("file.deleted", {
 })
 ```
 
-类似地在文件内容替换、版本删除处添加事件触发。
+类似地在文件内容替换处添加事件触发。
+
+**版本删除前置修改**：当前 `mml_manager` 的 `DELETE /ne-versions/{ne_id}` 在存在关联文件时直接返回 400 拒绝删除。为了使 `ne_version.deleted` 事件可触发，Task 11 需要同时修改该路由：先级联删除该版本下所有文件的挖掘数据（通过逐文件 emit `file.deleted`），再删除版本本体，最后 emit `ne_version.deleted`。如果管理员认为第一阶段不应修改删除语义，也可将 `ne_version.deleted` 事件及其订阅/测试降级到第二阶段。
 
 **文件夹递归删除场景**：当前 `DELETE /entries/{entry_id}` 同一路由承担单文件和文件夹递归删除。当被删对象是文件夹时，代码先用 `collect_ids()` 收集整棵子树，再批量删除所有后代 `file_entry`。
 
@@ -1402,6 +1405,12 @@ mml_manager 保留：
 - File content operations
 - Command extraction (`POST /scripts/{file_id}/extract-commands`)
 - Stats endpoint
+
+**测试迁移要求**：`test_dependency_mining.py` 的处置需在本任务中同步完成：
+
+- 将挖掘相关测试（调用 `/files/mine`、`/candidates/*` 等）迁移到 `test_graph_mining_integration.py`（Task 19）
+- 保留 `test_mml_manager.py` 中的文件管理/命令提取测试
+- `test_dependency_mining.py` 在路由迁移完成后重写为指向 `graph_mining` 插件的新测试，或合并到 `test_graph_mining_integration.py` 后删除
 
 **验证：**
 
@@ -1715,11 +1724,12 @@ git commit -m "[claude]: remove legacy DependencyMining page, replaced by GraphM
 每个测试搭建独立临时数据库 → 插入基础数据（ne_version, file_entry, command_instance）→ 调用 graph_mining 的 API → 断言结果。
 
 ```python
-@pytest.fixture
+@pytest_asyncio.fixture
 async def setup_env(tmp_path):
     """搭建完整的测试环境：db + plugin 实例"""
     from core.services.database import DatabaseService
     from core.services.parser import ParserService
+    from core.services.registry import ServiceRegistry
     from core.jobs.service import JobService
     from core.jobs.models import CREATE_JOBS_TABLE, CREATE_JOB_ITEMS_TABLE, CREATE_INDEXES
     from core.events.bus import PluginEventBus
@@ -1727,8 +1737,19 @@ async def setup_env(tmp_path):
 
     db = DatabaseService(db_path=str(tmp_path / "test.db"))
     await db.start()
-    # 初始化所有表...
-    # 创建 Plugin 实例并注册...
+    for sql in [CREATE_JOBS_TABLE, CREATE_JOB_ITEMS_TABLE] + CREATE_INDEXES:
+        await db.execute(sql)
+
+    registry = ServiceRegistry()
+    registry.register(DatabaseService, db)
+    job_service = JobService(db)
+    registry.register(JobService, job_service)
+
+    plugin = Plugin()
+    # plugin.on_register(...) 或手动注入依赖
+    # ...
+
+    yield {"db": db, "registry": registry}
     yield {"db": db, "plugin": plugin}
     await db.stop()
 ```
