@@ -349,3 +349,88 @@
 - 原因：
   - Claude 已补上 Task 11 的递归删除思路，本轮不再重复前一轮的生命周期入口问题。
   - 但新增要求没有同步进入 Task 19 的正式测试矩阵和通过计数，执行基线仍然分裂。
+
+## 实施计划七次全量复审结果（2026-04-04 16:25）
+
+> 本轮不再只追上一轮修补点，而是按“计划正文 ↔ 设计文档 ↔ 当前代码/测试基线”做了一次全量代码对照复审。以下问题为当前可确认的剩余阻塞项。
+
+### 1. `job_item.item_key` 的编码约定仍然自相矛盾，任务状态派生链路按当前正文无法同时成立
+
+- 严重性：高
+- 依据：
+  - 设计文档与 Task 9 都写 `/files` 状态派生通过 `item_key=file_entry_id` 关联 `job_item` 与文件（`docs/plans/2026-04-03-graph-mining-evolution-design.md` 第 348 行；`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 1072-1074 行）。
+  - 但 Task 2/Task 10 的示例又把 `item_key` 当成 `"file:1"` 这种带前缀字符串：Task 2 测试直接创建 `["file:1", "file:2"]`，Task 10 handler 也写死 `int(item["item_key"].replace("file:", ""))`（实施计划第 173、204、1192 行）。
+- 风险：
+  - 如果 `item_key` 真实存成 `"file:1"`，Task 9 的 `/files` JOIN/派生逻辑按 `item_key=file_entry_id` 就无法直接命中。
+  - 如果 `item_key` 真实存成纯数字字符串/整数，Task 10b 的 `replace("file:", "")` 又是多余且误导的另一套契约。
+  - 这会直接影响文件状态展示、worker 消费和取消/进度链路，是异步任务框架的基础契约问题。
+- 建议修复：
+  - 在设计文档、Task 9、Task 10、测试里统一 `item_key` 契约。
+  - 推荐二选一并全局收口：
+    1. 统一为纯 `file_entry_id` 字符串/整数，worker 直接 `int(item["item_key"])`；
+    2. 或统一为 `file:{id}`，并在 `/files` 状态派生处明确写出解析/映射方式，而不是写“item_key=file_entry_id”。
+
+### 2. `ne_version.deleted` 事件及对应测试要求与当前 `mml_manager` 的真实删除语义冲突，按现状根本没有可触发入口
+
+- 严重性：高
+- 依据：
+  - 设计文档和实施计划都把 `ne_version.deleted` 作为正式生命周期事件，Task 11/Task 19 还要求覆盖“删除版本 → 批量清理”链路（设计文档第 393 行；实施计划第 1327-1341、1705-1706 行）。
+  - 但当前真实 [`backend/plugins/mml_manager/main.py`](D:/mywork/CoreMaster/backend/plugins/mml_manager/main.py) 的 `DELETE /ne-versions/{ne_id}` 在存在任何关联文件时直接返回 400“该网元版本下存在关联文件，无法删除”（第 267-278 行）。
+  - 现有 [`backend/tests/test_mml_manager.py`](D:/mywork/CoreMaster/backend/tests/test_mml_manager.py) 也只覆盖“无文件时删除成功”，没有“带文件版本可删除”的入口（第 140-174 行）。
+- 风险：
+  - 当前计划把“版本删除批量清理”当成第一阶段必测链路，但现有代码事实里根本没有这样的可执行入口。
+  - 后续实现者会在“是修改 `mml_manager` 删除语义，还是删除该事件/测试要求”之间摇摆，计划无法指导唯一实现。
+- 建议修复：
+  - 在计划中明确二选一：
+    1. 第一阶段修改 `mml_manager.delete_ne_version`，允许删除带文件版本，并补对应级联/事件发射；
+    2. 或删除/降级 `ne_version.deleted` 的第一阶段要求，把它移到后续阶段。
+
+### 3. 最终测试迁移链路仍未闭合，`test_dependency_mining.py` 的去向没有任何正式任务承接
+
+- 严重性：高
+- 依据：
+  - Task 12 明确写“挖掘相关测试因路径变更需迁移到新测试文件”（实施计划第 1409-1410 行）。
+  - 当前仓库里真实存在一个庞大的 [`backend/tests/test_dependency_mining.py`](D:/mywork/CoreMaster/backend/tests/test_dependency_mining.py)，其大量测试都直接打到 `/api/plugins/mml_manager` 下的 `/files/mine`、`/files/mining-status`、`/candidates/*`、`/re-mine` 等旧挖掘路由。
+  - 但 Task 19 只新增 `test_graph_mining_integration.py`，没有任何 task 明确修改/拆分/删除旧的 `test_dependency_mining.py`；Task 20 却又要求 `pytest tests/ -v` 全通过（第 1757-1758 行）。
+- 风险：
+  - 一旦 Task 12 按计划把挖掘路由从 `mml_manager` 删掉，现有 `test_dependency_mining.py` 将成批失败。
+  - 这不是“后续顺手处理”的小问题，而是最终回归目标与任务拆分本身未闭合。
+- 建议修复：
+  - 增加一个显式测试迁移任务，至少明确：
+    1. 哪些用例迁移到 `test_graph_mining_integration.py`；
+    2. 哪些保留在 `test_mml_manager.py`；
+    3. `test_dependency_mining.py` 是重写、拆分还是删除。
+
+### 4. Task 5 的 worker 生命周期管理仍有缺口，按正文实现会留下未受控后台任务
+
+- 严重性：中
+- 依据：
+  - Task 5 启动 worker 的示例是 `asyncio.create_task(worker.start())`，但没有保存 task handle；清理阶段只有 `await worker.stop()`（实施计划第 639-646 行）。
+  - 当前仓库大量测试通过 `app.router.lifespan_context(app)` 反复启动/关闭应用（例如 [`backend/tests/test_integration.py`](D:/mywork/CoreMaster/backend/tests/test_integration.py) 第 8-13 行）。
+- 风险：
+  - 仅设置 `_running=False` 而不等待后台 task 退出，容易在 shutdown 后留下仍处于 sleep / query 循环中的 worker。
+  - 在测试环境里这会导致“应用已退出但后台任务仍访问 db/registry”的竞态，表现为 flaky 测试、pending task warning 或关闭时序问题。
+- 建议修复：
+  - 在 lifespan 中保存 `worker_task = asyncio.create_task(worker.start())` 到 `app.state` 或局部变量。
+  - shutdown 时先 `await worker.stop()`，再显式 `await worker_task`，确保退出链路闭合。
+
+### 5. 新测试示例与现有 pytest-asyncio 基线不一致，且夹具片段本身还残留未定义变量
+
+- 严重性：中
+- 依据：
+  - 实施计划里的 `job_db` 和 `setup_env` 都写成 `@pytest.fixture` + `async def ...`（第 154、1718 行）。
+  - 当前仓库现有异步 fixture 全部使用 `@pytest_asyncio.fixture`（见 [`backend/tests/test_integration.py`](D:/mywork/CoreMaster/backend/tests/test_integration.py)、[`backend/tests/test_mml_manager.py`](D:/mywork/CoreMaster/backend/tests/test_mml_manager.py)、[`backend/tests/test_dependency_mining.py`](D:/mywork/CoreMaster/backend/tests/test_dependency_mining.py) 等）。
+  - 同时 Task 19 的 `setup_env` 片段里 `yield {"db": db, "plugin": plugin}` 使用了未定义的 `plugin` 变量（实施计划第 1728-1733 行）。
+- 风险：
+  - 这会让实施者在编写新测试时直接沿用一套与当前仓库风格/运行方式不一致的 fixture 基线。
+  - `plugin` 未定义则是直接的示例错误，会把最早的测试骨架再次带偏。
+- 建议修复：
+  - 将新测试示例统一改为 `pytest_asyncio.fixture` 风格。
+  - 修正文中 `setup_env` 片段，至少把 plugin 实例化/注册步骤写完整，或删除未定义的 `plugin` 返回值。
+
+## 本轮结论（2026-04-04 16:25）
+
+- 结论：**实施计划 v7 仍未达到可执行基线，继续不放行**
+- 说明：
+  - v7 已闭环我上一轮指出的 Task 19 测试矩阵同步问题。
+  - 但经过本轮全量复审，当前仍至少存在 5 个可确认的剩余阻塞项，涉及基础契约、生命周期语义、测试迁移和生命周期管理，不能进入执行阶段。
