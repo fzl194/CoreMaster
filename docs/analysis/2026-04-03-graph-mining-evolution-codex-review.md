@@ -199,7 +199,52 @@
   - 把 Task 9 中对 worker 的引用改成当前正确编号。
   - 把依赖图和总计同步到 v2 的任务结构，至少保证编号引用与正文一致。
 
+## 实施计划三次复审结果（2026-04-04 11:44）
+
+### 1. Task 11 仍未给出真正的事件订阅动作，按当前正文实现时 graph_mining 不会收到任何生命周期事件
+
+- 严重性：高
+- 依据：
+  - Task 11 标题写的是“mml_manager 触发 + graph_mining 订阅”，但正文只有 `mml_manager` 侧的 `emit("file.deleted", ...)` 示例，以及 `graph_mining` 侧一个 `_on_file_deleted` 函数片段（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 1234-1274 行）。
+  - 该段没有任何 `self.event_bus.on(...)` / `event_bus.on(...)` 注册语句，也没有展示 `file.content_replaced` / `ne_version.deleted` 的订阅注册。
+- 风险：
+  - 即使 `mml_manager` 正确发事件，`graph_mining` 端也不会有 handler 被挂上去，文件删除/替换后的清理链路仍然是断的。
+  - 这会直接打破设计文档 §6.5 中最关键的跨插件一致性保证。
+- 建议修复：
+  - 在 Task 11 明确补上事件注册代码，例如：
+    1. `self.event_bus = ctx.get_service(PluginEventBus)`
+    2. `self.event_bus.on("file.deleted", self._on_file_deleted)`
+    3. `self.event_bus.on("file.content_replaced", self._on_file_content_replaced)`
+    4. `self.event_bus.on("ne_version.deleted", self._on_ne_version_deleted)`
+
+### 2. Task 11 的 handler 签名与其所处上下文仍然矛盾，按正文字面实现会在第一次 emit 时抛参数错误
+
+- 严重性：高
+- 依据：
+  - 文档明确写“在 `graph_mining/main.py` 的 `on_register` 中”，随后给出的示例是 `async def _on_file_deleted(self, payload): ...`（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 1255-1260 行）。
+  - 如果这是 `on_register` 里的局部函数，它不应该带 `self` 形参；而如果它是类方法，就不应表述为“在 on_register 中定义”。
+  - 当前 `PluginEventBus.emit()` 设计是把单个 `payload` 传给 handler，因此局部函数若带 `self` 会在调用时直接缺参。
+- 风险：
+  - 这会让第一次处理 `file.deleted` 时直接抛 `TypeError`，而不是执行清理。
+  - 由于 `PluginEventBus` 约定“handler 失败不阻塞主流程”，这个错误还可能被日志吞掉，留下静默的数据不一致。
+- 建议修复：
+  - 二选一明确写法：
+    1. 把 `_on_file_deleted` 明确写成 `Plugin` 类方法，并在 `on_register` 中注册 `self._on_file_deleted`；
+    2. 或者把它写成 `on_register` 内的局部函数 `async def _on_file_deleted(payload): ...`，不要带 `self` 参数。
+
+### 3. Task 5 的“启动成功验证”仍然没有覆盖 lifespan 和插件注册阶段，无法发现这轮最关键的 worker / event_bus 接线错误
+
+- 严重性：中
+- 依据：
+  - Task 5 的验证步骤仍然是 `python -c "import main; print('OK')"`（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 652-654 行）。
+  - 这个命令只验证模块能 import，不会运行 FastAPI lifespan，因此不会执行 job 表初始化、`registry.register(JobWorker, worker)`、插件 `on_register`、也不会启动 worker。
+- 风险：
+  - 当前计划最脆弱的地方恰好是 lifespan 内的服务装配和插件注册顺序；而现有验证步骤对这些完全没有覆盖。
+  - 结果是计划声称“接入主应用完成”，但最核心的接线错误要到更后面的任务甚至手动联调才会暴露。
+- 建议修复：
+  - 把验证改成至少能执行 lifespan 的方式，例如补一个最小启动测试，或使用 `TestClient(app)` / `asgi-lifespan` 跑一遍应用启动流程，再断言 `registry` 中能取到 `JobService`、`JobWorker`、`PluginEventBus`。
+
 ## 最终评估
 
-- 结论：**实施计划仍需继续修订，暂不建议进入执行**
-- 原因：v2 修掉了上一轮的一部分问题，但 Task 11 的清理重算链路仍然不正确，Task 3 的代码基线也没有真正修干净；若现在放行，执行仍会在核心基础设施和生命周期清理上偏航。
+- 结论：**实施计划 v3 仍未达到可执行基线，继续不放行**
+- 原因：Claude 修掉了上一轮指出的字面问题，但 Task 11 的订阅动作和 handler 签名仍然没有闭合；这会让跨插件生命周期清理在真正执行时继续失效。
