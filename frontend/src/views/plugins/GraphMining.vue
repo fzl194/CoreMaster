@@ -226,7 +226,7 @@ const candidateColumns = computed<DataTableColumns<Candidate>>(() => [
   {
     title: "操作", key: "actions", width: 280,
     render: (row) => {
-      const btns = [];
+      const btns: any[] = [];
       btns.push(h(NButton, { size: "tiny", quaternary: true, onClick: () => showEvidenceDrawer(row) }, { default: () => "详情" }));
       if (row.status === "pending" || row.status === "ready_for_review") {
         btns.push(h(NButton, { size: "tiny", type: "success", quaternary: true, onClick: () => handleAccept(row.id) }, { default: () => "接受" }));

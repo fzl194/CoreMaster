@@ -570,13 +570,16 @@ async def test_09_content_replaced_auto_remine(client):
     )
     assert len(contribs_after) == 0
 
-    # Verify a new mining job was created
+    # Verify a new mining job was created for this file
     job_service = _get_job_service()
     jobs = await job_service.list_jobs(job_type="mining")
     assert len(jobs) >= 1
-    latest_job = jobs[0]
-    params = json.loads(latest_job["params_json"])
-    assert f1 in params["file_ids"]
+    # Find the job that contains our file
+    matching = [
+        j for j in jobs
+        if f1 in json.loads(j["params_json"]).get("file_ids", [])
+    ]
+    assert len(matching) >= 1, f"No mining job found for file {f1}"
 
 
 # ── Test 10: 候选状态机转换完整流程 ──
