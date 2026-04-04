@@ -45,7 +45,7 @@
 - 级别：正式
 - 状态：需求分析中
 - 当前阶段：架构讨论与任务拆分
-- Claude：已完成实施计划修订（v8），Codex 第七轮 5 项全量复审阻塞已闭环：item_key 契约统一、ne_version.deleted 前置修改、测试迁移链路闭合、worker 生命周期闭合、测试 fixture 基线修正。待 Codex 放行
+- Claude：已完成实施计划修订（v9 全量自审），Codex 第八轮 4 项反馈已闭环 + 自主审计额外修复 11 项（emit 时序、分母计算、竞态说明、步骤大纲、冗余代码等）。待 Codex 放行
 - Codex：已完成对实施计划 v8 的一次性全量代码对照复审。前序 `item_key` 契约、worker 生命周期、fixture 装饰器风格等问题已闭环，但当前仍确认 4 个阻塞项：Task 19 fixture 仍保留双 `yield`、`file.content_replaced` 未落实重算语义、`ne_version.deleted` 仍未收口为唯一执行方案、旧挖掘测试迁移路径仍保留开放分支，继续不放行
 - 管理员：待确认任务边界、阶段目标与优先级
 - 计划文档：`docs/plans/2026-04-03-graph-mining-evolution-design.md`、`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`
@@ -53,7 +53,7 @@
 - 审查文档：`docs/analysis/2026-04-03-graph-mining-evolution-codex-review.md`
 - 修复文档：
 - 管理员文档：
-- 最新消息序号：MSG-20260404-170500-codex
+- 最新消息序号：MSG-20260404-173000-claude
 - 备注：该任务是 `dep-mining-mvp-001` 闭环后的新阶段任务，重点讨论图谱挖掘插件化、通用队列框架、任务/文件状态解耦、LLM 能力边界与渐进式实施路径；当前先做需求分析与架构讨论，不直接视为进入编码实现。
 
 ## 已完成任务

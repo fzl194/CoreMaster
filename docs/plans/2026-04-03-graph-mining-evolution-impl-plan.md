@@ -14,6 +14,13 @@
 > - v1：初始版本（2026-04-04）
 > - v2：根据 Codex 审查修订 3 项问题（Task 3 `_json.dumps` 修正、Task 5 `JobWorker` 注册到 registry、Task 10a 新增 `CandidateService` 统一 owner）
 > - v3：根据 Codex 第二轮审查修订 3 项问题（Task 11 重算链路补 total_mined + 清理残留代码、Task 3 补 `import json`、依赖图+总计同步 v2 结构）
+> - v4：Task 11 事件订阅注册、handler 签名修正、Task 5 lifespan 验证
+> - v5：Task 2 `lastrowid` 接口对齐、Task 5 lifespan 测试对齐代码骨架、Task 9 引用同步
+> - v6：Task 11 文件夹递归删除生命周期入口 + 集成测试要求
+> - v7：Task 19 测试矩阵同步、通过计数 7->9
+> - v8：`item_key` 契约统一、worker 生命周期闭合、测试 fixture 基线修正
+> - v8：`item_key` 契约统一、worker 生命周期闭合、测试 fixture 基线修正
+> - v9：全量自审——`ne_version.deleted` 收口唯一方案、测试迁移单一路径、`file.content_replaced` 补竞态说明+重排队、emit 时序约束、`_on_ne_version_deleted` 修复分母计算、`_mine_single_file`/`recalculate` 补步骤大纲、移除冗余 `__import__`、setup_env 单 yield
 
 ---
 
@@ -472,7 +479,7 @@ class JobWorker:
 
 ```
 Run: cd backend && python -m pytest tests/test_core_jobs.py -v
-Expected: 9 passed
+Expected: 10 passed
 ```
 
 **Step 5: 提交**
@@ -745,10 +752,6 @@ class Plugin:
         self.event_bus = None
 
     async def on_register(self, ctx):
-        self.db = ctx.get_service(
-            __import__("core.services.database", fromlist=["DatabaseService"]).DatabaseService
-        )
-        # 简化获取方式
         from core.services.database import DatabaseService
         from core.services.parser import ParserService
         from core.jobs.service import JobService
@@ -1141,7 +1144,14 @@ class CandidateService:
         3. rejected 状态：新证据自动激活回 pending
         4. 同步 graph_edge 的 evidence（如果 candidate 在 graph 状态）
         """
-        # ... 完整实现从 main.py:1473-1609 迁移
+        # 完整实现从 main.py:1473-1609 迁移，关键分支：
+        # 1. 查询该候选的所有 contributions -> 聚合总证据/分数
+        # 2. 按 §6.6 终态保护规则处理：
+        #    - graph/non_graph：只更新 score/evidence，不改状态
+        #    - rejected + 有新贡献：激活回 pending
+        #    - pending/ready_for_review：正常更新
+        # 3. 若状态为 graph，同步更新 graph_edge.evidence
+        # 4. 零贡献的 graph/non_graph：清零分数但保留记录（不被删除）
         pass
 
     async def get_total_mined(self, ne_version_id: int) -> int:
@@ -1214,8 +1224,16 @@ class MiningWorker:
 
     async def _mine_single_file(self, file_id, ne_version_id, alg_ver) -> list[int]:
         """挖掘单个文件，返回受影响的 candidate IDs"""
-        # 复用 mml_manager 中的文件解析 + 候选生成 + 贡献写入逻辑
-        # ... (从 main.py:1209-1315 迁移)
+        # 关键步骤（从 main.py:1209-1315 迁移）：
+        # 1. 查询 file_entry + command_instance 获取该文件的所有命令
+        # 2. 对每个命令调用 Pipeline.evaluate() -> 返回候选列表
+        # 3. 对每个候选：upsert dependency_candidate（保留 graph/non_graph 终态）
+        #    - 若候选已存在且状态为 graph/non_graph：只更新贡献，不改状态
+        #    - 若候选已存在且状态为 rejected：激活回 pending
+        #    - 若候选不存在：新建为 pending
+        # 4. 写入 candidate_contribution（file_entry_id + candidate_id + 证据字段）
+        # 5. upsert file_mining_record（如果不存在则创建）
+        # 6. 收集所有受影响 candidate_id 返回，供外层循环重算
         pass
 ```
 
@@ -1257,7 +1275,7 @@ git commit -m "[claude]: add shared CandidateService and MiningWorker with prope
 
 **Step 1: mml_manager emit 事件**
 
-在 mml_manager 的 `on_register` 中获取 event_bus：
+在 `mml_manager/main.py` 的 `Plugin.on_register` 方法中（当前只有 `self.db` 和 `self.parser`），新增：
 
 ```python
 from core.events.bus import PluginEventBus
@@ -1276,11 +1294,13 @@ await self.event_bus.emit("file.deleted", {
 
 类似地在文件内容替换处添加事件触发。
 
-**版本删除前置修改**：当前 `mml_manager` 的 `DELETE /ne-versions/{ne_id}` 在存在关联文件时直接返回 400 拒绝删除。为了使 `ne_version.deleted` 事件可触发，Task 11 需要同时修改该路由：先级联删除该版本下所有文件的挖掘数据（通过逐文件 emit `file.deleted`），再删除版本本体，最后 emit `ne_version.deleted`。如果管理员认为第一阶段不应修改删除语义，也可将 `ne_version.deleted` 事件及其订阅/测试降级到第二阶段。
+**版本删除前置修改**：当前 `mml_manager` 的 `DELETE /ne-versions/{ne_id}` 在存在关联文件时直接返回 400 拒绝删除。为了使 `ne_version.deleted` 事件可触发，Task 11 需要同时修改该路由：先级联删除该版本下所有文件的挖掘数据（通过逐文件 emit `file.deleted`），再删除版本本体，最后 emit `ne_version.deleted`。同时需要更新 `test_mml_manager.py` 中相关测试基线（当前"带文件版本删除被拒绝"测试需改为验证级联删除行为）。
 
 **文件夹递归删除场景**：当前 `DELETE /entries/{entry_id}` 同一路由承担单文件和文件夹递归删除。当被删对象是文件夹时，代码先用 `collect_ids()` 收集整棵子树，再批量删除所有后代 `file_entry`。
 
-策略：**在 `collect_ids()` 循环中按文件逐条 emit `file.deleted`**，而不是只在最外层 emit 一次。具体改动：
+策略：**在 `collect_ids()` 之后、`DELETE FROM file_entry` 之前**，按文件逐条 emit `file.deleted`。关键：emit 必须在 DB 删除之前，因为 handler 可能需要 `ne_version_id`（从 `file_entry` 查询）。
+
+> **时序约束**：单文件删除同样遵循"先 emit 再 DELETE"顺序。payload 应在 emit 前拼好（已包含 `ne_version_id`），避免删除后查询不到。
 
 ```python
 # 在 mml_manager 的 delete_entry 路由中，文件夹删除分支里：
@@ -1324,8 +1344,18 @@ async def _on_file_deleted(self, payload):
         await self.candidate_service.recalculate(row["candidate_id"], "v1", total_mined)
 
 async def _on_file_content_replaced(self, payload):
-    # 文件内容替换：先清理旧贡献（与 file.deleted 相同逻辑）
+    # 文件内容替换：先清理旧贡献，然后自动重排队挖掘
     await self._on_file_deleted(payload)
+    # 自动为被替换文件创建新的挖掘 job
+    # 竞态说明：如果该文件当前正在被 MiningWorker 处理，清理会删除其 contribution，
+    # 导致正在运行的 worker 部分写入丢失。这是可接受的——新 job 会重新完整挖掘。
+    file_id = payload["file_entry_id"]
+    ne_version_id = payload.get("ne_version_id")
+    await self.job_service.create_job(
+        "mining",
+        {"file_ids": [file_id], "ne_version_id": ne_version_id},
+        [file_id],
+    )
 
 async def _on_ne_version_deleted(self, payload):
     ne_version_id = payload["ne_version_id"]
@@ -1342,16 +1372,18 @@ async def _on_ne_version_deleted(self, payload):
         (ne_version_id,),
     )
     await self.db.execute("DELETE FROM file_mining_record WHERE ne_version_id = ?", (ne_version_id,))
+    # 重算受影响候选：不传 total_mined（已删除版本的记录无法提供分母），
+    # recalculate 内部根据剩余贡献自行计算
     for row in affected:
-        total_mined = await self.candidate_service.get_total_mined(ne_version_id)
-        await self.candidate_service.recalculate(row["candidate_id"], "v1", total_mined)
+        await self.candidate_service.recalculate(row["candidate_id"], "v1")
 
-# === on_register 中注册订阅（Plugin.on_register 方法体内）===
+# === on_register 中补充事件订阅（追加到 Task 6 已有的 on_register 尾部）===
+# 注意：self.event_bus 已在 Task 6 的 on_register 中通过 ctx.get_service(PluginEventBus) 获取，
+# 此处只需注册 handler，不需要重复赋值。
 
 async def on_register(self, ctx):
-    # ...（已有的路由、服务注册代码）...
-    # 订阅跨插件生命周期事件
-    self.event_bus = ctx.get_service(PluginEventBus)
+    # ...（Task 6 已有的路由、服务注册代码，包含 self.event_bus = ctx.get_service(PluginEventBus)）...
+    # 追加：订阅跨插件生命周期事件
     self.event_bus.on("file.deleted", self._on_file_deleted)
     self.event_bus.on("file.content_replaced", self._on_file_content_replaced)
     self.event_bus.on("ne_version.deleted", self._on_ne_version_deleted)
@@ -1410,7 +1442,7 @@ mml_manager 保留：
 
 - 将挖掘相关测试（调用 `/files/mine`、`/candidates/*` 等）迁移到 `test_graph_mining_integration.py`（Task 19）
 - 保留 `test_mml_manager.py` 中的文件管理/命令提取测试
-- `test_dependency_mining.py` 在路由迁移完成后重写为指向 `graph_mining` 插件的新测试，或合并到 `test_graph_mining_integration.py` 后删除
+- 迁移完成后 **删除** `test_dependency_mining.py`
 
 **验证：**
 
@@ -1718,6 +1750,8 @@ git commit -m "[claude]: remove legacy DependencyMining page, replaced by GraphM
 | rejected 自动激活 | rejected 新证据后激活回 pending |
 | 零贡献终态不被删除 | graph/non_graph 零贡献时记录保留 |
 | 文件状态派生正确 | /files API 返回状态与 job_item + file_mining_record 组合一致 |
+| 文件内容替换后自动重挖 | file.content_replaced -> 清理旧贡献 -> 自动创建新 mining job -> 新贡献生成 |
+| 文件内容替换后自动重挖 | file.content_replaced -> 清理旧贡献 -> 自动创建新 mining job -> 新贡献生成 |
 
 **测试策略：**
 
@@ -1726,14 +1760,12 @@ git commit -m "[claude]: remove legacy DependencyMining page, replaced by GraphM
 ```python
 @pytest_asyncio.fixture
 async def setup_env(tmp_path):
-    """搭建完整的测试环境：db + plugin 实例"""
+    """搭建完整的测试环境：db + registry + event_bus"""
     from core.services.database import DatabaseService
-    from core.services.parser import ParserService
     from core.services.registry import ServiceRegistry
     from core.jobs.service import JobService
     from core.jobs.models import CREATE_JOBS_TABLE, CREATE_JOB_ITEMS_TABLE, CREATE_INDEXES
     from core.events.bus import PluginEventBus
-    from plugins.graph_mining.main import Plugin
 
     db = DatabaseService(db_path=str(tmp_path / "test.db"))
     await db.start()
@@ -1744,13 +1776,10 @@ async def setup_env(tmp_path):
     registry.register(DatabaseService, db)
     job_service = JobService(db)
     registry.register(JobService, job_service)
+    event_bus = PluginEventBus()
+    registry.register(PluginEventBus, event_bus)
 
-    plugin = Plugin()
-    # plugin.on_register(...) 或手动注入依赖
-    # ...
-
-    yield {"db": db, "registry": registry}
-    yield {"db": db, "plugin": plugin}
+    yield {"db": db, "registry": registry, "event_bus": event_bus}
     await db.stop()
 ```
 
@@ -1758,7 +1787,7 @@ async def setup_env(tmp_path):
 
 ```
 Run: cd backend && python -m pytest tests/test_graph_mining_integration.py -v
-Expected: 9 passed
+Expected: 10 passed
 ```
 
 **提交：**
