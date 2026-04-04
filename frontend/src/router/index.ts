@@ -24,9 +24,9 @@ const router = createRouter({
           component: () => import("../views/plugins/DbManager.vue"),
         },
         {
-          path: "plugins/dependency-mining",
-          name: "dependency-mining",
-          component: () => import("../views/plugins/DependencyMining.vue"),
+          path: "plugins/graph-mining",
+          name: "graph-mining",
+          component: () => import("../views/plugins/GraphMining.vue"),
         },
       ],
     },
