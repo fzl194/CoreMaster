@@ -1701,7 +1701,9 @@ git commit -m "[claude]: remove legacy DependencyMining page, replaced by GraphM
 | 测试 | 验证点 |
 |------|--------|
 | job 取消后状态一致性 | cancel → job_item skipped/completed/failed，文件状态回退 |
-| 文件删除触发清理 | 删除文件 → contribution 清理 → 候选分数重算 |
+| 单文件删除触发清理 | 删除单个文件 → contribution + file_mining_record 清理 → 候选分数重算 |
+| 文件夹递归删除全后代清理 | 删除含子文件的文件夹 → 所有后代文件的 contribution / file_mining_record 均被清理，无挂贡献残留 |
+| 版本删除批量清理 | 删除 ne_version → 该版本下所有文件的清理链路生效，候选重算 |
 | 已审核候选终态保护 | graph 候选重挖后状态不变、贡献更新 |
 | non_graph 终态保护 | non_graph 新证据后状态不变 |
 | rejected 自动激活 | rejected 新证据后激活回 pending |
@@ -1735,7 +1737,7 @@ async def setup_env(tmp_path):
 
 ```
 Run: cd backend && python -m pytest tests/test_graph_mining_integration.py -v
-Expected: 7 passed
+Expected: 9 passed
 ```
 
 **提交：**
