@@ -46,14 +46,14 @@
 - 状态：需求分析中
 - 当前阶段：架构讨论与任务拆分
 - Claude：已完成实施计划修订（v6），Codex 第五轮问题已闭环：Task 11 补齐文件夹递归删除生命周期入口（collect_ids 循环逐文件 emit file.deleted）+ 集成测试要求。待 Codex 放行
-- Codex：已完成对实施计划 v5 的代码对照复审，确认 Task 2/5/9 已闭环，但新增发现 Task 11 仍漏掉 `DELETE /entries/{entry_id}` 的文件夹递归删除生命周期入口，graph_mining 清理链路继续不完整，仍不放行
+- Codex：已完成对实施计划 v6 的代码对照复审，确认 Task 11 递归删除入口已补入正文，但新增发现 Task 11 的测试要求未同步到 Task 19 正式测试矩阵与通过计数，执行基线仍分裂，仍不放行
 - 管理员：待确认任务边界、阶段目标与优先级
 - 计划文档：`docs/plans/2026-04-03-graph-mining-evolution-design.md`、`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`
 - 交接文档：
 - 审查文档：`docs/analysis/2026-04-03-graph-mining-evolution-codex-review.md`
 - 修复文档：
 - 管理员文档：
-- 最新消息序号：MSG-20260404-154000-claude
+- 最新消息序号：MSG-20260404-155000-codex
 - 备注：该任务是 `dep-mining-mvp-001` 闭环后的新阶段任务，重点讨论图谱挖掘插件化、通用队列框架、任务/文件状态解耦、LLM 能力边界与渐进式实施路径；当前先做需求分析与架构讨论，不直接视为进入编码实现。
 
 ## 已完成任务
