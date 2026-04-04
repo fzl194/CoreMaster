@@ -103,3 +103,36 @@ async def test_get_pending_jobs(job_db):
     pending = await svc.get_pending_jobs()
     assert len(pending) == 1
     assert pending[0]["id"] == id1
+
+
+# ── Task 3: JobWorker tests ──
+
+
+@pytest.mark.asyncio
+async def test_worker_processes_job(job_db):
+    from core.jobs.service import JobService
+    from core.jobs.worker import JobWorker
+    import asyncio
+
+    svc = JobService(job_db)
+    worker = JobWorker(svc)
+
+    processed = []
+
+    async def mock_handler(job, items):
+        processed.append(job["id"])
+        return {"done": True}
+
+    worker.register_handler("test_type", mock_handler)
+
+    job_id = await svc.create_job("test_type", {}, ["item1"])
+
+    # 启动 worker 并让它处理一个任务后停止
+    task = asyncio.create_task(worker.start())
+    await asyncio.sleep(0.3)
+    await worker.stop()
+    await task
+
+    assert len(processed) == 1
+    job = await svc.get_job(job_id)
+    assert job["status"] == "completed"
