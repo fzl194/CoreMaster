@@ -19,8 +19,8 @@
 > - v6：Task 11 文件夹递归删除生命周期入口 + 集成测试要求
 > - v7：Task 19 测试矩阵同步、通过计数 7->9
 > - v8：`item_key` 契约统一、worker 生命周期闭合、测试 fixture 基线修正
-> - v8：`item_key` 契约统一、worker 生命周期闭合、测试 fixture 基线修正
 > - v9：全量自审——`ne_version.deleted` 收口唯一方案、测试迁移单一路径、`file.content_replaced` 补竞态说明+重排队、emit 时序约束、`_on_ne_version_deleted` 修复分母计算、`_mine_single_file`/`recalculate` 补步骤大纲、移除冗余 `__import__`、setup_env 单 yield
+> - v10：修正 Task 19 测试矩阵重复行（去重"文件内容替换后自动重挖"）、修复修订说明 v8 重复条目
 
 ---
 
@@ -1750,7 +1750,6 @@ git commit -m "[claude]: remove legacy DependencyMining page, replaced by GraphM
 | rejected 自动激活 | rejected 新证据后激活回 pending |
 | 零贡献终态不被删除 | graph/non_graph 零贡献时记录保留 |
 | 文件状态派生正确 | /files API 返回状态与 job_item + file_mining_record 组合一致 |
-| 文件内容替换后自动重挖 | file.content_replaced -> 清理旧贡献 -> 自动创建新 mining job -> 新贡献生成 |
 | 文件内容替换后自动重挖 | file.content_replaced -> 清理旧贡献 -> 自动创建新 mining job -> 新贡献生成 |
 
 **测试策略：**
