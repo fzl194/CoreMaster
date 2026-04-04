@@ -155,7 +155,51 @@
 - 建议修复：
   - 修正文档中的实现片段，保证代码示例最少是语法和名字一致的可运行基线。
 
+## 实施计划二次复审结果（2026-04-04 11:37）
+
+### 1. Task 11 的事件清理示例仍然没有形成可执行的重算链路，当前片段会产出错误分数或直接引入坏代码
+
+- 严重性：高
+- 依据：
+  - 当前 Task 11 的 `graph_mining` 事件 handler 示例在删除贡献后，直接执行 `await self.candidate_service.recalculate(row["candidate_id"], "v1")`，没有先计算 `ne_version_id` 对应的 `total_mined`（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 1258-1269 行）。
+  - 紧接着又出现一行游离且缩进错误的 `total_mined = await self.candidate_service.get_total_mined(payload.get("ne_version_id"))`，它既不在循环前，也没有被传给 `recalculate`（第 1271 行）。
+  - 同一份计划里，Task 10 的 worker 路径明确要求 `recalculate(cand_id, alg_ver, total_mined)` 先拿到总文件数再重算（第 1182-1185 行），说明这里的 Task 11 已经和共享服务契约失配。
+- 风险：
+  - 文件删除/替换正是我们前面最强调的数据一致性入口。如果这里按当前计划实现，候选分数会在错误分母下重算，或者开发时被这段坏示例直接带偏。
+  - 这不是描述层的小瑕疵，而是会影响核心清理链路正确性的阻塞问题。
+- 建议修复：
+  - 在 Task 11 明确改成：
+    1. 先取 `ne_version_id = payload["ne_version_id"]`
+    2. 删除 contribution / file_mining_record
+    3. `total_mined = await self.candidate_service.get_total_mined(ne_version_id)`
+    4. 再循环 `await self.candidate_service.recalculate(candidate_id, "v1", total_mined)`
+  - 并删除当前缩进错误的游离代码片段。
+
+### 2. Task 3 仍然声称已修复 `_json.dumps`，但正文示例顶部依然没有 `import json`
+
+- 严重性：中
+- 依据：
+  - Task 3 的 `worker.py` 示例现在把 `_json.dumps` 改成了 `json.dumps`（第 457 行），但该代码块顶部仍只有 `import asyncio` 和 `import logging`，没有 `import json`（第 408-413 行）。
+  - 文档注释却写“上面 handler 调用中 `import json` 已在顶部”，与正文不一致（第 466 行）。
+- 风险：
+  - 这会让 Claude 在最早的基础设施任务中继续遇到 `NameError`，说明“已闭环”的修复并未真正落到文本基线。
+- 建议修复：
+  - 在 Task 3 代码块顶部补上 `import json`，并重新核对正文与注释一致。
+
+### 3. 任务引用和依赖图仍未完全同步到 v2，执行时会继续制造错位上下文
+
+- 严重性：中
+- 依据：
+  - Task 9 仍写着“实际挖掘由 mining_worker 异步执行（Task 11）”，但 v2 已把共享领域服务和 mining worker 调整到 Task 10（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 1045 行、1080 行）。
+  - 依赖图和总计仍写 “Task 10 (worker)” 且 “预估 Tasks: 20 个”，没有体现新增的 10a 子任务和重新划分后的关键依赖（第 1697-1724 行）。
+  - 协作消息中宣称“3 项问题已闭环”，但计划正文仍存在上述未同步内容，说明当前版本还不是稳定的执行基线。
+- 风险：
+  - 这类错位会在后续执行时让人按照错误 task 编号跳读文档，尤其在长计划、多次提交的情况下，容易把 Task 10/11 的职责再次混淆。
+- 建议修复：
+  - 把 Task 9 中对 worker 的引用改成当前正确编号。
+  - 把依赖图和总计同步到 v2 的任务结构，至少保证编号引用与正文一致。
+
 ## 最终评估
 
-- 结论：**设计已通过，但实施计划需修订后再执行**
-- 原因：设计约束本身已经闭环，但当前实施计划在 worker 注册链路和生命周期清理逻辑归属上仍有阻塞级缺口；若直接按现版执行，最可能在 Task 10-11 之间卡住。
+- 结论：**实施计划仍需继续修订，暂不建议进入执行**
+- 原因：v2 修掉了上一轮的一部分问题，但 Task 11 的清理重算链路仍然不正确，Task 3 的代码基线也没有真正修干净；若现在放行，执行仍会在核心基础设施和生命周期清理上偏航。
