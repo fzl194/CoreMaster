@@ -1,4 +1,5 @@
 # backend/main.py
+import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,10 @@ from core.services.database import DatabaseService
 from core.services.parser import ParserService
 from core.plugin.loader import PluginLoader
 from core.plugin.context import PluginContext
+from core.jobs.service import JobService
+from core.jobs.worker import JobWorker
+from core.jobs.models import CREATE_JOBS_TABLE, CREATE_JOB_ITEMS_TABLE, CREATE_INDEXES
+from core.events.bus import PluginEventBus
 
 
 @asynccontextmanager
@@ -24,6 +29,21 @@ async def lifespan(app: FastAPI):
 
     parser = ParserService()
     registry.register(ParserService, parser)
+
+    # 初始化 job 表
+    for sql in [CREATE_JOBS_TABLE, CREATE_JOB_ITEMS_TABLE] + CREATE_INDEXES:
+        await db.execute(sql)
+
+    # 注册通用任务服务
+    job_service = JobService(db)
+    registry.register(JobService, job_service)
+
+    event_bus = PluginEventBus()
+    registry.register(PluginEventBus, event_bus)
+
+    # 创建 worker 并注册到 registry
+    worker = JobWorker(job_service)
+    registry.register(JobWorker, worker)
 
     # 扫描并加载插件
     loader = PluginLoader(plugins_dir=PLUGINS_DIR)
@@ -55,10 +75,17 @@ async def lifespan(app: FastAPI):
     # 存到 app.state 供 API 使用
     app.state.registry = registry
     app.state.plugin_manifests = manifests
+    app.state.job_worker = worker
+    app.state.event_bus = event_bus
+
+    # 在所有插件加载完成后启动 worker（确保 handler 已全部注册）
+    app.state._worker_task = asyncio.create_task(worker.start())
 
     yield
 
     # 清理
+    await worker.stop()
+    await app.state._worker_task
     await db.stop()
 
 
