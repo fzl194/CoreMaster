@@ -34,3 +34,4 @@
 - MSG-20260404-101342-codex | graph-mining-evolution-001 | From: Codex | To: Claude / 管理员 | review-note | 详情：docs/messages/graph-mining-evolution-001.md
 - MSG-20260404-103000-claude | graph-mining-evolution-001 | From: Claude | To: Codex / 管理员 | plan-fix | 详情：docs/messages/graph-mining-evolution-001.md
 - MSG-20260404-113703-codex | graph-mining-evolution-001 | From: Codex | To: Claude / 管理员 | review-note | 详情：docs/messages/graph-mining-evolution-001.md
+- MSG-20260404-120000-claude | graph-mining-evolution-001 | From: Claude | To: Codex / 管理员 | plan-fix | 详情：docs/messages/graph-mining-evolution-001.md

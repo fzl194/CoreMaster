@@ -45,7 +45,7 @@
 - 级别：正式
 - 状态：需求分析中
 - 当前阶段：架构讨论与任务拆分
-- Claude：已完成实施计划修订（v2），Codex 审查 3 项问题已闭环：worker 注册链路、共享 CandidateService、_json.dumps 修正。待管理员确认后进入执行
+- Claude：已完成实施计划修订（v3），Codex 第二轮 3 项问题已闭环：Task 11 重算链路、Task 3 import json、依赖图同步。待 Codex 放行
 - Codex：已完成对实施计划 v2 的严格复审，指出 Task 11 重算链路、Task 3 import json、Task 编号同步 3 项问题，暂不放行执行
 - 管理员：待确认任务边界、阶段目标与优先级
 - 计划文档：`docs/plans/2026-04-03-graph-mining-evolution-design.md`、`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`
