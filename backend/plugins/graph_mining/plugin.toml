@@ -1,0 +1,14 @@
+# backend/plugins/graph_mining/plugin.toml
+[plugin]
+name = "graph_mining"
+version = "0.1.0"
+description = "MML 命令参数依赖关系挖掘与图谱管理"
+
+[plugin.backend]
+entry = "main.py"
+routes_prefix = "/api/plugins/graph_mining"
+
+[plugin.frontend]
+entry = "src/index.vue"
+menu_title = "图谱挖掘"
+icon = "git-branch"
