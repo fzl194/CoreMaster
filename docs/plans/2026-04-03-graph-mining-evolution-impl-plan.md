@@ -244,11 +244,12 @@ class JobService:
         self.db = db
 
     async def create_job(self, job_type: str, params: dict, item_keys: list[str]) -> int:
-        cursor = await self.db.execute(
+        await self.db.execute(
             "INSERT INTO job (type, status, params_json, progress_total) VALUES (?, 'queued', ?, ?)",
             (job_type, json.dumps(params, ensure_ascii=False), len(item_keys)),
         )
-        job_id = cursor.lastrowid
+        row = await self.db.query("SELECT last_insert_rowid() as id")
+        job_id = row[0]["id"]
         for key in item_keys:
             await self.db.execute(
                 "INSERT INTO job_item (job_id, item_key, status) VALUES (?, ?, 'pending')",
@@ -655,32 +656,29 @@ await worker.stop()
 
 ```python
 import pytest
-from httpx import AsyncClient, ASGITransport
 from main import app
 
 
 @pytest.mark.asyncio
 async def test_lifespan_registers_services():
-    """\u9a8c\u8bc1\u5e94\u7528 lifespan \u6b63\u786e\u6ce8\u518c JobService\u3001JobWorker\u3001PluginEventBus"""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        pass  # \u89e6\u53d1 lifespan startup
-    # \u9a8c\u8bc1\u6838\u5fc3\u670d\u52a1\u5df2\u5728 registry \u4e2d
-    from core.plugin.registry import ServiceRegistry
-    from core.jobs.service import JobService
-    from core.jobs.worker import JobWorker
-    from core.events.bus import PluginEventBus
+    """验证应用 lifespan 正确注册 JobService、JobWorker、PluginEventBus"""
+    async with app.router.lifespan_context(app):
+        # 从 app.state.registry 取得全局注册表（与 main.py startup 一致）
+        from core.services.registry import ServiceRegistry
+        from core.jobs.service import JobService
+        from core.jobs.worker import JobWorker
+        from core.events.bus import PluginEventBus
 
-    reg = ServiceRegistry.instance()
-    assert reg.get(JobService) is not None, "JobService not registered"
-    assert reg.get(JobWorker) is not None, "JobWorker not registered"
-    assert reg.get(PluginEventBus) is not None, "PluginEventBus not registered"
+        reg = app.state.registry
+        assert reg.get(JobService) is not None, "JobService not registered"
+        assert reg.get(JobWorker) is not None, "JobWorker not registered"
+        assert reg.get(PluginEventBus) is not None, "PluginEventBus not registered"
 ```
 
 ```
 Run: cd backend && python -m pytest tests/test_lifespan.py -v
 Expected: 1 passed
 ```
-
 **Step 3: 更新 PluginContext**
 
 在 `backend/core/plugin/context.py` 中，`get_service` 和 `register_service` 已通过 registry 代理，无需改动。插件可以通过 `ctx.get_service(JobService)` 和 `ctx.get_service(PluginEventBus)` 获取服务。
@@ -1069,7 +1067,7 @@ git commit -m "[claude]: add mining evaluation pipeline with hard rules"
 1. **`POST /mining/start`** — 从 `mml_manager/main.py:1174-1353` 迁移 `/files/mine` 的核心逻辑，改造为：
    - 调用 `self.job_service.create_job("mining", {"file_ids": file_ids, "ne_version_id": ne_version_id}, item_keys)`
    - 立即返回 `{"job_id": job_id}`
-   - 实际挖掘由 mining_worker 异步执行（Task 11）
+   - 实际挖掘由 mining_worker 异步执行（Task 10b）
 
 2. **`GET /files`** — 从 `main.py:1446-1459` 迁移，增加状态派生逻辑（§6.4）：
    - LEFT JOIN file_mining_record + LEFT JOIN job_item（通过 item_key=file_entry_id）
