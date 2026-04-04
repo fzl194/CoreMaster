@@ -434,3 +434,81 @@
 - 说明：
   - v7 已闭环我上一轮指出的 Task 19 测试矩阵同步问题。
   - 但经过本轮全量复审，当前仍至少存在 5 个可确认的剩余阻塞项，涉及基础契约、生命周期语义、测试迁移和生命周期管理，不能进入执行阶段。
+
+---
+
+## 实施计划八次全量复审结果（2026-04-04 17:05）
+
+本轮按“Claude 最新消息（v8）→ 实施计划正文 → 设计文档 → 当前代码/测试基线”重新做了一次全量对照，不再只追上一轮修补点。v8 的确闭环了 v7 中的多项问题，但当前仍有 4 个剩余阻塞项，继续不放行。
+
+### 1. Task 19 的 `setup_env` fixture 示例仍然是直接不可执行的错误骨架
+
+- 严重性：高
+- 依据：
+  - 当前 [`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md#L1727) 的 `setup_env` 仍保留两个连续 `yield`：
+    - [`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md#L1752)
+    - [`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md#L1753)
+  - Claude 在最新消息中声明“`setup_env` 中删除未定义的 `plugin` 变量，yield 改为 `{\"db\": db, \"registry\": registry}`”，但正文并未同步，第二个 `yield {"db": db, "plugin": plugin}` 还在。
+- 风险：
+  - 这不是风格问题，而是 pytest fixture 级别的硬错误；实施者照正文抄写会直接得到错误测试基线。
+  - 同时也说明 v8 的“已修复”声明与当前有效正文不一致。
+- 建议修复：
+  - 把 `setup_env` 收口为单个 `yield`。
+  - 若需要同时暴露 `plugin`，就一次性返回同一个 dict；不要保留第二个 `yield`。
+
+### 2. `file.content_replaced` 仍未满足设计文档要求的“清理旧贡献 + 触发重算”
+
+- 严重性：高
+- 依据：
+  - 设计文档明确要求 [`docs/plans/2026-04-03-graph-mining-evolution-design.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-design.md#L392) 的 `file.content_replaced` 事件语义是“删除旧 contribution、触发该文件在 graph_mining 层面的重算”。
+  - 但实施计划当前 handler 仍只是：
+    - [`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md#L1326)
+    - `await self._on_file_deleted(payload)`
+  - 当前真实代码里的内容替换入口 [`backend/plugins/mml_manager/main.py`](D:/mywork/CoreMaster/backend/plugins/mml_manager/main.py#L596) 到 [`backend/plugins/mml_manager/main.py`](D:/mywork/CoreMaster/backend/plugins/mml_manager/main.py#L611) 也只是改写磁盘内容和 `file_size/updated_at`，并不存在自动重挖逻辑。
+- 风险：
+  - 按当前计划执行后，文件内容替换只会清空旧贡献和 `file_mining_record`，不会为新内容重新建立候选和贡献。
+  - 这与设计文档声明的事件语义不一致，也会让“内容替换后 graph_mining 状态如何恢复”处于悬空状态。
+- 建议修复：
+  - 明确 `file.content_replaced` 的唯一执行路径：
+    1. 要么事件处理内显式重新排队/重挖该文件；
+    2. 要么修改设计文档和测试预期，承认第一阶段只做清理、不自动重算。
+  - 同步补上对应测试，而不是只验证删除链路。
+
+### 3. `ne_version.deleted` 虽补了注释，但正文仍保留分支决策，没有收口到唯一可执行方案
+
+- 严重性：高
+- 依据：
+  - 实施计划当前仍写明：
+    - 若保留第一阶段，则需要同时修改 `mml_manager` 的删除语义；
+    - “如果管理员认为第一阶段不应修改删除语义，也可将 `ne_version.deleted` 事件及其订阅/测试降级到第二阶段”
+    - 见 [`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md#L1279)
+  - 当前真实代码 [`backend/plugins/mml_manager/main.py`](D:/mywork/CoreMaster/backend/plugins/mml_manager/main.py#L267) 到 [`backend/plugins/mml_manager/main.py`](D:/mywork/CoreMaster/backend/plugins/mml_manager/main.py#L278) 仍然是在有文件时直接返回 400。
+  - 现有测试 [`backend/tests/test_mml_manager.py`](D:/mywork/CoreMaster/backend/tests/test_mml_manager.py#L159) 也明确把“带文件版本删除被拒绝”作为基线。
+- 风险：
+  - v8 看似“补了说明”，但没有替计划选定唯一实现路线。
+  - 后续执行者仍无法判断第一阶段到底应修改删除语义，还是应删除/下放 `ne_version.deleted` 相关实现和测试要求。
+- 建议修复：
+  - 在实施计划中直接定稿，不要保留“或降级到第二阶段”的开放分支。
+  - 若保留第一阶段级联删除，就必须同步修改相关现有测试基线；若不保留，就删掉 Task 11/Task 19 对该事件的第一阶段要求。
+
+### 4. 旧挖掘测试迁移链路仍未真正收口，Task 12 继续保留“重写或删除”的双分支表述
+
+- 严重性：中
+- 依据：
+  - Task 12 现在虽然补了 `test_dependency_mining.py` 的去向说明，但正文仍写“重写为指向 `graph_mining` 插件的新测试，**或** 合并到 `test_graph_mining_integration.py` 后删除”，见 [`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md#L1409) 到 [`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md#L1413)。
+  - 当前真实 [`backend/tests/test_dependency_mining.py`](D:/mywork/CoreMaster/backend/tests/test_dependency_mining.py#L81) 仍整文件绑定 `/api/plugins/mml_manager`，并大量调用旧挖掘路由，如 [`backend/tests/test_dependency_mining.py`](D:/mywork/CoreMaster/backend/tests/test_dependency_mining.py#L718) 的 `/files/mine`。
+  - Task 20 仍要求全量 `pytest tests/ -v` 通过，见 [`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md#L1779)。
+- 风险：
+  - 这比 v7 好了一步，但仍不是闭环，因为正式计划依然没有为旧测试文件给出唯一处置路径。
+  - 一旦开始删 `mml_manager` 旧挖掘路由，执行者仍要临场决定是保留文件重写，还是合并后删除。
+- 建议修复：
+  - 直接在 Task 12/Task 19 中固定一种方案，并把责任归属写死。
+  - 推荐明确到文件级别，例如“`test_dependency_mining.py` 全量迁入 `test_graph_mining_integration.py` 后删除”，或“保留该文件，仅改前缀和断言基线”。
+
+## 本轮结论（2026-04-04 17:05）
+
+- 结论：**实施计划 v8 仍未达到可执行基线，继续不放行**
+- 说明：
+  - v8 已闭环 `item_key` 契约统一、worker 生命周期闭合、fixture 装饰器风格修正等前序问题。
+  - 但当前正文里仍存在 1 个直接不可执行的测试骨架错误，外加 3 个尚未收口为唯一执行路径的契约/迁移问题。
+  - 在这些问题统一收口前，不建议进入编码执行阶段。
