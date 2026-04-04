@@ -649,11 +649,36 @@ asyncio.create_task(worker.start())
 await worker.stop()
 ```
 
-**Step 2: 验证启动不报错**
+**Step 2: 验证 lifespan 启动与服务注册**
+
+新增 `backend/tests/test_lifespan.py`：
+
+```python
+import pytest
+from httpx import AsyncClient, ASGITransport
+from main import app
+
+
+@pytest.mark.asyncio
+async def test_lifespan_registers_services():
+    """\u9a8c\u8bc1\u5e94\u7528 lifespan \u6b63\u786e\u6ce8\u518c JobService\u3001JobWorker\u3001PluginEventBus"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        pass  # \u89e6\u53d1 lifespan startup
+    # \u9a8c\u8bc1\u6838\u5fc3\u670d\u52a1\u5df2\u5728 registry \u4e2d
+    from core.plugin.registry import ServiceRegistry
+    from core.jobs.service import JobService
+    from core.jobs.worker import JobWorker
+    from core.events.bus import PluginEventBus
+
+    reg = ServiceRegistry.instance()
+    assert reg.get(JobService) is not None, "JobService not registered"
+    assert reg.get(JobWorker) is not None, "JobWorker not registered"
+    assert reg.get(PluginEventBus) is not None, "PluginEventBus not registered"
+```
 
 ```
-Run: cd backend && python -c "import main; print('OK')"
-Expected: OK（不报 ImportError）
+Run: cd backend && python -m pytest tests/test_lifespan.py -v
+Expected: 1 passed
 ```
 
 **Step 3: 更新 PluginContext**
@@ -1252,11 +1277,13 @@ await self.event_bus.emit("file.deleted", {
 
 类似地在文件内容替换、版本删除处添加事件触发。
 
-**Step 2: graph_mining 注册 handler（使用共享 CandidateService)**
+**Step 2: graph_mining 注册事件订阅（使用共享 CandidateService)**
 
-在 `graph_mining/main.py` 的 `on_register` 中：
+在 `graph_mining/main.py` 的 `Plugin` 类上定义 handler 方法，并在 `on_register` 中注册订阅：
 
 ```python
+# === Plugin 类方法（定义在 Plugin 类体内）===
+
 async def _on_file_deleted(self, payload):
     file_id = payload["file_entry_id"]
     ne_version_id = payload.get("ne_version_id")
@@ -1271,9 +1298,43 @@ async def _on_file_deleted(self, payload):
     total_mined = await self.candidate_service.get_total_mined(ne_version_id)
     for row in affected:
         await self.candidate_service.recalculate(row["candidate_id"], "v1", total_mined)
+
+async def _on_file_content_replaced(self, payload):
+    # 文件内容替换：先清理旧贡献（与 file.deleted 相同逻辑）
+    await self._on_file_deleted(payload)
+
+async def _on_ne_version_deleted(self, payload):
+    ne_version_id = payload["ne_version_id"]
+    # 删除该版本下所有文件的贡献，然后重算受影响候选
+    affected = await self.db.query(
+        "SELECT DISTINCT cc.candidate_id FROM candidate_contribution cc "
+        "JOIN file_mining_record fmr ON cc.file_entry_id = fmr.file_entry_id "
+        "WHERE fmr.ne_version_id = ?",
+        (ne_version_id,),
+    )
+    await self.db.execute(
+        "DELETE FROM candidate_contribution WHERE file_entry_id IN "
+        "(SELECT file_entry_id FROM file_mining_record WHERE ne_version_id = ?)",
+        (ne_version_id,),
+    )
+    await self.db.execute("DELETE FROM file_mining_record WHERE ne_version_id = ?", (ne_version_id,))
+    for row in affected:
+        total_mined = await self.candidate_service.get_total_mined(ne_version_id)
+        await self.candidate_service.recalculate(row["candidate_id"], "v1", total_mined)
+
+# === on_register 中注册订阅（Plugin.on_register 方法体内）===
+
+async def on_register(self, ctx):
+    # ...（已有的路由、服务注册代码）...
+    # 订阅跨插件生命周期事件
+    self.event_bus = ctx.get_service(PluginEventBus)
+    self.event_bus.on("file.deleted", self._on_file_deleted)
+    self.event_bus.on("file.content_replaced", self._on_file_content_replaced)
+    self.event_bus.on("ne_version.deleted", self._on_ne_version_deleted)
 ```
 
-> **职责明确**: `_recalculate_candidate` 不再分散在 MiningWorker 和 Plugin 上，而是统一归属到 `CandidateService`，单实例。Task 10 的 MiningWorker 和 Task 11 的事件 handler 都通过 `self.candidate_service` 趈费。
+> **职责明确**: `_on_file_deleted` 等是 `Plugin` 类方法，通过 `self` 访问 `self.candidate_service`（Task 10a 注册的共享实例）和 `self.db`。`on_register` 中通过 `ctx.get_service(PluginEventBus)` 获取事件总线，并显式调用 `.on(event_name, handler)` 完成订阅注册。三个生命周期事件（`file.deleted`、`file.content_replaced`、`ne_version.deleted`）均有完整订阅链路，不存在无主 handler 或缺失注册的问题。
+
 
 **Step 3: 提交**
 
