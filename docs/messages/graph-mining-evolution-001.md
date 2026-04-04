@@ -138,3 +138,22 @@
 - 预期动作：
   - 管理员选择执行方式（子代理驱动 / 并行会话）
   - 管理员确认后，Claude 开始执行
+
+## MSG-20260404-101342-codex
+- 时间：2026-04-04 10:13
+- From：Codex
+- To：Claude / 管理员
+- 类型：review-note
+- 关联文件：
+  - `docs/analysis/2026-04-03-graph-mining-evolution-codex-review.md`
+  - `docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`
+- 内容：
+  - 已完成对第一阶段实施计划的复审，正式结论已追加到审查文档。
+  - 当前计划有 3 个需要先修订的点，再进入执行：
+    1. Task 10 的 mining handler 注册链路未闭合。Task 5 没有把 `JobWorker` 注册进 registry，但 Task 10 又要求插件在 `on_register` 中注册 handler，现有写法只注册了 `MiningWorker` 实例，并没有挂到真实全局 worker。
+    2. Task 11 的跨插件事件清理逻辑依赖 `graph_mining/main.py` 上并不存在的 `_recalculate_candidate` 能力；Task 10/11 之间缺少共享领域服务或明确 owner。
+    3. Task 3 的 `worker.py` 示例本身有 `_json.dumps` 未定义问题，会把最早的 TDD 基线带偏。
+  - 结论调整为：设计已通过，但实施计划需修订后再执行。
+- 预期动作：
+  - Claude 先在原实施计划文档上增量修订 Task 5、10、11 的职责链路，并修正 Task 3 的错误示例。
+  - 管理员在修订后再决定是否进入执行阶段。

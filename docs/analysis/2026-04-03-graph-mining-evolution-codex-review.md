@@ -111,7 +111,51 @@
   - 文档存在两个 `## 11` 章节标题，属于编号层面的编辑问题，不影响当前设计语义，也不构成阻塞。
   - 数据库迁移脚本和第二阶段 LLM 事务边界仍未展开，但属于后续实施计划和实现阶段需要继续细化的事项，不阻塞当前进入实施计划。
 
+## 实施计划复审结果（2026-04-04 10:13）
+
+### 1. `JobWorker` 的注册链路没有闭合，Task 10 当前写法无法把 mining handler 挂到真实 worker 上
+
+- 严重性：高
+- 依据：
+  - Task 5 只把 `worker = JobWorker(job_service)` 放到 `app.state.job_worker`，没有注册进 `ServiceRegistry`，而插件上下文只能通过 `ctx.get_service(...)` 访问 registry 内的服务（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 620-634 行；`backend/core/plugin/context.py` 第 12-16 行）。
+  - Task 10 却要求在 `graph_mining/main.py` 的 `on_register` 中注册 handler，但示例代码只是 `ctx.register_service(type(mining_worker), mining_worker)`，这只会把 `MiningWorker` 实例放进 registry，并不会把 handler 注册到全局 `JobWorker`（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 1162-1184 行）。
+- 风险：
+  - 按当前计划执行，`POST /mining/start` 能创建 job，但全局 worker 没有 `"mining"` handler，队列会停在 `queued`。
+  - 计划文本本身在同一任务内先给出一种做法，再在注释里推翻为“最简方案”，会让 Claude 在执行阶段缺少唯一正确实现路径。
+- 建议修复：
+  - 在实施计划中明确唯一方案，例如：
+    1. Task 5 把 `JobWorker` 注册进 `ServiceRegistry`；
+    2. Task 10 明确使用 `ctx.get_service(JobWorker).register_handler("mining", mining_worker.handle)`；
+    3. 删除 `ctx.register_service(type(mining_worker), mining_worker)` 这条误导性写法。
+
+### 2. 跨插件生命周期清理的执行主体未抽出来，Task 11 依赖了并不存在于 `graph_mining/main.py` 的能力
+
+- 严重性：高
+- 依据：
+  - Task 10 把 `_recalculate_candidate`、`_mine_single_file` 等复杂逻辑放在 `workers/mining_worker.py` 内（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 1092-1156 行）。
+  - 但 Task 11 又要求在 `graph_mining/main.py` 的事件 handler 中直接调用 `self._recalculate_candidate(...)`，而计划没有定义这些方法会出现在 `Plugin` 类上，也没有单独抽出可复用的 service（第 1224-1243 行）。
+- 风险：
+  - 文件删除/替换事件是当前数据一致性的关键入口。如果这部分逻辑没有明确 owner，实施时很容易出现一套重算逻辑在 worker 中、一套清理逻辑在 plugin 中，最后发生行为分叉或直接调用不存在的方法。
+  - 这会把我们前面已经在设计层补齐的“生命周期清理链路”再次打回不确定状态。
+- 建议修复：
+  - 在实施计划里补一个共享的 `MiningDomainService` / `CandidateService` / `LifecycleService` 之类的任务，明确：
+    1. worker 和事件 handler 共用同一套候选重算/终态保护逻辑；
+    2. `graph_mining/main.py` 只负责注册路由和事件，不直接承载复杂领域逻辑；
+    3. Task 10、11 的文件归属和调用关系重新写清。
+
+### 3. Task 3 的示例实现本身不可运行，TDD 基线会被计划里的错误代码带偏
+
+- 严重性：中
+- 依据：
+  - Task 3 的 `worker.py` 示例里使用了 `_json.dumps(...)`，但文件顶部既没有 `import json as _json`，也没有任何 `_json` 定义（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 452-454 行）。
+  - 同一段计划又在注释里声称“`import json` 已在顶部”，与示例代码不一致（第 462 行）。
+- 风险：
+  - 这是计划文档里的直接可执行片段，不是纯描述。Claude 按计划逐 task 落地时，如果照抄这里的基线，会在最早的核心基础设施任务里引入显式运行错误。
+  - 这类错误会污染“先写测试再实现”的节奏，因为失败将来自计划示例自身，而不是任务预期。
+- 建议修复：
+  - 修正文档中的实现片段，保证代码示例最少是语法和名字一致的可运行基线。
+
 ## 最终评估
 
-- 结论：**复审通过，可进入实施计划**
-- 原因：Claude 已按审查意见在原设计文档上完成增量修订，当前版本已补齐进入实施计划所需的关键设计约束。后续重点转入任务拆分、迁移顺序和测试落地。
+- 结论：**设计已通过，但实施计划需修订后再执行**
+- 原因：设计约束本身已经闭环，但当前实施计划在 worker 注册链路和生命周期清理逻辑归属上仍有阻塞级缺口；若直接按现版执行，最可能在 Task 10-11 之间卡住。
