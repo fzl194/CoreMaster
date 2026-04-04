@@ -1275,6 +1275,29 @@ await self.event_bus.emit("file.deleted", {
 
 类似地在文件内容替换、版本删除处添加事件触发。
 
+**文件夹递归删除场景**：当前 `DELETE /entries/{entry_id}` 同一路由承担单文件和文件夹递归删除。当被删对象是文件夹时，代码先用 `collect_ids()` 收集整棵子树，再批量删除所有后代 `file_entry`。
+
+策略：**在 `collect_ids()` 循环中按文件逐条 emit `file.deleted`**，而不是只在最外层 emit 一次。具体改动：
+
+```python
+# 在 mml_manager 的 delete_entry 路由中，文件夹删除分支里：
+# 原始代码已有: for eid, etype in all_ids: ...
+# 在该循环内增加事件触发：
+for eid, etype in all_ids:
+    if etype == "file":
+        # 取该文件的 ne_version_id
+        ne_rows = await self.db.query(
+            "SELECT ne_version_id FROM file_entry WHERE id=?", (eid,)
+        )
+        ne_version_id = ne_rows[0]["ne_version_id"] if ne_rows else None
+        await self.event_bus.emit("file.deleted", {
+            "file_entry_id": eid,
+            "ne_version_id": ne_version_id,
+        })
+```
+
+这样每个被删的后代文件都会触发独立的 `file.deleted` 事件，`graph_mining` 的 `_on_file_deleted` handler 会对每个文件分别执行清理和候选重算，确保不留挂贡献。
+
 **Step 2: graph_mining 注册事件订阅（使用共享 CandidateService)**
 
 在 `graph_mining/main.py` 的 `Plugin` 类上定义 handler 方法，并在 `on_register` 中注册订阅：
@@ -1333,6 +1356,13 @@ async def on_register(self, ctx):
 
 > **职责明确**: `_on_file_deleted` 等是 `Plugin` 类方法，通过 `self` 访问 `self.candidate_service`（Task 10a 注册的共享实例）和 `self.db`。`on_register` 中通过 `ctx.get_service(PluginEventBus)` 获取事件总线，并显式调用 `.on(event_name, handler)` 完成订阅注册。三个生命周期事件（`file.deleted`、`file.content_replaced`、`ne_version.deleted`）均有完整订阅链路，不存在无主 handler 或缺失注册的问题。
 
+
+
+**集成测试要求**：在实施时补充以下测试：
+
+- `删除单文件 → graph_mining 清理 contribution + file_mining_record + 重算候选`
+- `删除含子文件的文件夹 → 所有后代文件的 contribution / file_mining_record 均被清理，无挂贡献残留`
+- `删除版本 → 该版本下所有文件的清理链路生效`
 
 **Step 3: 提交**
 
