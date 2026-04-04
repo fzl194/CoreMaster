@@ -10,6 +10,10 @@
 
 **设计文档:** `docs/plans/2026-04-03-graph-mining-evolution-design.md` (v2, 已审查通过)
 
+> **修订说明:**
+> - v1：初始版本（2026-04-04）
+> - v2：根据 Codex 审查修订 3 项问题（Task 3 `_json.dumps` 修正、Task 5 `JobWorker` 注册到 registry、Task 10a 新增 `CandidateService` 统一 owner）
+
 ---
 
 ## Task 1: core/jobs 数据模型与枚举
@@ -450,7 +454,7 @@ class JobWorker:
         try:
             result = await handler(job, items)
             await self._svc.update_job_status(
-                job_id, "completed", result_json=_json.dumps(result, ensure_ascii=False) if result else None
+                job_id, "completed", result_json=json.dumps(result, ensure_ascii=False) if result else None
             )
         except Exception as e:
             logger.exception("Job %d failed", job_id)
@@ -624,12 +628,15 @@ registry.register(JobService, job_service)
 event_bus = PluginEventBus()
 registry.register(PluginEventBus, event_bus)
 
-# 启动 worker（待插件注册 handler 后运行）
+# 创建 worker 并注册到 registry，插件可通过 ctx.get_service(JobWorker) 获取并注册 handler
 worker = JobWorker(job_service)
+registry.register(JobWorker, worker)
+
 app.state.job_worker = worker
 app.state.event_bus = event_bus
 
-# 在 yield 之前（即服务就绪后）启动 worker
+# 在所有插件加载完成后（yield 之前）启动 worker
+# 注意：放在插件加载循环之后，确保 handler 已全部注册
 import asyncio
 asyncio.create_task(worker.start())
 ```
@@ -1070,12 +1077,57 @@ git commit -m "[claude]: add graph_mining API routes for mining and candidate ma
 
 ---
 
-## Task 10: Mining Worker — 异步挖掘执行器
+## Task 10: 共享领域服务 + Mining Worker
 
 **Files:**
+- Create: `backend/plugins/graph_mining/services/__init__.py`
+- Create: `backend/plugins/graph_mining/services/candidate_service.py` — 共享候选重算服务
 - Create: `backend/plugins/graph_mining/workers/__init__.py`
 - Create: `backend/plugins/graph_mining/workers/mining_worker.py`
-- Modify: `backend/plugins/graph_mining/main.py` — 在 on_register 中注册 handler
+- Modify: `backend/plugins/graph_mining/main.py` — 在 on_register 中注册 handler 到全局 worker
+
+### 10a: 共享候选服务 candidate_service.py
+
+> **职责说明**：`CandidateService` 是 graph_mining 插件内的共享领域服务，负责候选汇总分数重算和终态保护。MiningWorker（Task 10）和事件 handler（Task 11）都通过 `self.candidate_service` 调用它，避免 owner 不明。
+
+```python
+# backend/plugins/graph_mining/services/candidate_service.py
+import json
+import logging
+from plugins.graph_mining.engine.scorers import aggregate_contributions
+
+logger = logging.getLogger(__name__)
+
+
+class CandidateService:
+    """候选领域服务：汇总分数重算 + 终态保护（§6.6）"""
+
+    def __init__(self, db):
+        self.db = db
+
+    async def recalculate(self, cand_id: int, alg_ver: str, total_mined: int = 0) -> None:
+        """重算候选汇总分数，遵守 §6.6 终态保护规则。
+
+        从 mml_manager/main.py:1473-1609 的 _recalculate_candidate_scores 迁移。
+        核心逻辑：
+        1. 查询所有 contributions → 聚合分数
+        2. graph/non_graph 状态：只更新分数和证据，不改变状态
+        3. rejected 状态：新证据自动激活回 pending
+        4. 同步 graph_edge 的 evidence（如果 candidate 在 graph 状态）
+        """
+        # ... 完整实现从 main.py:1473-1609 迁移
+        pass
+
+    async def get_total_mined(self, ne_version_id: int) -> int:
+        rows = await self.db.query(
+            "SELECT COUNT(DISTINCT file_entry_id) as cnt FROM file_mining_record "
+            "WHERE ne_version_id=? AND mined=1",
+            (ne_version_id,),
+        )
+        return rows[0]["cnt"] if rows else 0
+```
+
+### 10b: Mining Worker
 
 **Step 1: 实现 mining_worker.py**
 
@@ -1092,16 +1144,15 @@ logger = logging.getLogger(__name__)
 class MiningWorker:
     """消费 mining 类型 job 的 worker handler"""
 
-    def __init__(self, db, parser, job_service, event_bus):
+    def __init__(self, db, parser, job_service, candidate_service):
         self.db = db
         self.parser = parser
         self.job_service = job_service
-        self.event_bus = event_bus
+        self.candidate_service = candidate_service  # 共享领域服务
 
     async def handle(self, job: dict, items: list[dict]) -> dict:
         params = json.loads(job["params_json"])
         ne_version_id = params["ne_version_id"]
-        file_ids = [int(item["item_key"].replace("file:", "")) for item in items]
         alg_ver = "v1"
 
         all_cand_ids = set()
@@ -1128,10 +1179,10 @@ class MiningWorker:
                     item["id"], "failed", error_message=str(e)
                 )
 
-        # 重算所有受影响候选的汇总分数
-        total_mined = await self._get_total_mined(ne_version_id)
+        # 重算所有受影响候选的汇总分数（通过共享服务）
+        total_mined = await self.candidate_service.get_total_mined(ne_version_id)
         for cand_id in all_cand_ids:
-            await self._recalculate_candidate(cand_id, alg_ver, total_mined)
+            await self.candidate_service.recalculate(cand_id, alg_ver, total_mined)
 
         return {"mined_files": mined_count, "candidates_affected": len(all_cand_ids)}
 
@@ -1140,54 +1191,34 @@ class MiningWorker:
         # 复用 mml_manager 中的文件解析 + 候选生成 + 贡献写入逻辑
         # ... (从 main.py:1209-1315 迁移)
         pass
-
-    async def _recalculate_candidate(self, cand_id, alg_ver, total_mined):
-        """重算候选汇总分数 + 终态保护"""
-        # 从 main.py:1473-1609 迁移
-        # 增加 §6.6 终态保护逻辑
-        pass
-
-    async def _get_total_mined(self, ne_version_id) -> int:
-        rows = await self.db.query(
-            "SELECT COUNT(DISTINCT file_entry_id) as cnt FROM file_mining_record "
-            "WHERE ne_version_id=? AND mined=1",
-            (ne_version_id,),
-        )
-        return rows[0]["cnt"] if rows else 0
 ```
 
-**Step 2: 在 main.py on_register 中注册 handler**
+**Step 2: 在 main.py on_register 中注册 handler 到全局 JobWorker**
 
 ```python
 # 在 graph_mining/main.py 的 on_register 末尾：
+from .services.candidate_service import CandidateService
 from .workers.mining_worker import MiningWorker
+from core.jobs.worker import JobWorker
 
-mining_worker = MiningWorker(self.db, self.parser, self.job_service, self.event_bus)
+# 创建共享候选服务（MiningWorker 和事件 handler 共用）
+self.candidate_service = CandidateService(self.db)
 
-# 注册到全局 worker
-from core.jobs.service import JobService
-job_service = ctx.get_service(JobService)
-# 通过 ctx 注册共享的 worker handler
-ctx.register_service(type(mining_worker), mining_worker)
+# 创建 mining worker handler
+mining_worker = MiningWorker(self.db, self.parser, self.job_service, self.candidate_service)
+
+# 从 registry 获取全局 JobWorker，注册 mining handler
+global_worker = ctx.get_service(JobWorker)
+global_worker.register_handler("mining", mining_worker.handle)
 ```
 
-然后在 `backend/main.py` 的 lifespan 中，在插件加载完成后，收集插件注册的 worker handler：
-
-```python
-# 在所有插件加载后：
-for manifest in manifests:
-    plugin_name = manifest["plugin"]["name"]
-    # 如果插件注册了 handler，通过 registry 获取
-    # 简化方案：让 graph_mining 的 on_register 直接注册到 worker
-```
-
-> 实际实现中，最简方案是 graph_mining 的 on_register 中直接获取 JobWorker 并注册 handler。需要把 worker 通过 registry 共享。
+> **链路闭合**：Task 5 将 `JobWorker` 注册到 `ServiceRegistry` → Task 10 中 `ctx.get_service(JobWorker)` 获取全局 worker → 直接注册 handler。不需要额外的中间注册机制。
 
 **Step 3: 提交**
 
 ```
-git add backend/plugins/graph_mining/workers/ backend/plugins/graph_mining/main.py
-git commit -m "[claude]: add mining worker for async job consumption with terminal state protection"
+git add backend/plugins/graph_mining/services/ backend/plugins/graph_mining/workers/ backend/plugins/graph_mining/main.py
+git commit -m "[claude]: add shared CandidateService and MiningWorker with proper handler registration"
 ```
 
 ---
@@ -1219,7 +1250,7 @@ await self.event_bus.emit("file.deleted", {
 
 类似地在文件内容替换、版本删除处添加事件触发。
 
-**Step 2: graph_mining 注册 handler**
+**Step 2: graph_mining 注册 handler（使用共享 CandidateService)**
 
 在 `graph_mining/main.py` 的 `on_register` 中：
 
@@ -1233,15 +1264,14 @@ async def _on_file_deleted(self, payload):
     )
     await self.db.execute("DELETE FROM candidate_contribution WHERE file_entry_id=?", (file_id,))
     await self.db.execute("DELETE FROM file_mining_record WHERE file_entry_id=?", (file_id,))
-    # 重算受影响候选
+    # 通过共享服务重算受影响候选（同 MiningWorker 使用的同一个实例）
     for row in affected:
-        await self._recalculate_candidate(row["candidate_id"], "v1", ...)
+        await self.candidate_service.recalculate(row["candidate_id"], "v1")
 
-# 在 on_register 中注册
-self.event_bus.on("file.deleted", self._on_file_deleted)
-self.event_bus.on("file.content_replaced", self._on_file_content_replaced)
-self.event_bus.on("ne_version.deleted", self._on_ne_version_deleted)
+            total_mined = await self.candidate_service.get_total_mined(payload.get("ne_version_id"))
 ```
+
+> **职责明确**: `_recalculate_candidate` 不再分散在 MiningWorker 和 Plugin 上，而是统一归属到 `CandidateService`，单实例。Task 10 的 MiningWorker 和 Task 11 的事件 handler 都通过 `self.candidate_service` 趈费。
 
 **Step 3: 提交**
 
