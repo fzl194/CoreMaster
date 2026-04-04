@@ -298,3 +298,29 @@
   - Task 5 的“启动验证”虽然改了方向，但正文示例仍引用当前仓库不存在的 registry 接口，也没有按现有测试基线正确进入 lifespan。
   - Task 2 的 `create_job()` 仍依赖当前 `DatabaseService` 不提供的 `lastrowid` 返回值，核心任务链路从一开始就不成立。
   - Task 9 的任务引用同步仍未完全收口，执行上下文继续存在错位风险。
+
+## 实施计划五次复审结果（2026-04-04 15:20）
+
+### 1. Task 11 仍然漏掉“文件夹递归删除”这条现有生命周期入口，graph_mining 清理链路在真实代码上仍然不完整
+
+- 严重性：高
+- 依据：
+  - v5 虽然修掉了单文件 `file.deleted` / lifespan / `lastrowid` 的问题，但 Task 11 的事件方案正文仍只写“在文件删除路由中（`DELETE /entries/{entry_id}`）添加 `file.deleted` 事件”，示例 payload 也是单个 `file_entry_id`（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 1266-1273 行）。
+  - 当前真实 [`backend/plugins/mml_manager/main.py`](D:/mywork/CoreMaster/backend/plugins/mml_manager/main.py) 的 `DELETE /entries/{entry_id}` 不是单纯删文件：同一路由还承担“删除文件夹并递归删除其所有子文件/子目录”的职责，会先 `collect_ids()` 收集整棵子树，再批量删除所有 `file_entry`（第 397-455 行）。
+  - 现有测试也明确覆盖了这一行为，见 [`backend/tests/test_mml_manager.py`](D:/mywork/CoreMaster/backend/tests/test_mml_manager.py) 的 `test_20_delete_folder_recursive`（第 497-540 行）。
+- 风险：
+  - 如果按当前 Task 11 文本直接执行，删除单个文件时也许能发一个 `file.deleted`，但删除文件夹时不会天然给每个后代文件都补齐 graph_mining 清理。
+  - 结果是 `file_entry` / 磁盘文件已经被递归删掉，但 `candidate_contribution`、`file_mining_record` 以及后续候选聚合结果仍可能残留悬挂数据。
+  - 这正是设计文档 §6.5 想解决的生命周期一致性问题；当前计划在真实代码入口上还没有闭环。
+- 建议修复：
+  - 在 Task 11 明确写出递归删除策略，至少二选一：
+    1. `mml_manager` 在文件夹删除时先收集所有后代 `file_entry_id + ne_version_id`，对每个文件逐条 `emit("file.deleted", ...)`；
+    2. 或新增批量事件/批量清理接口，由 `graph_mining` 一次性消费整批被删文件。
+  - 同时补一条第一阶段集成测试，覆盖“删除含子文件的文件夹后 graph_mining 数据同步清理”。
+
+## 本轮结论（2026-04-04 15:20）
+
+- 结论：**实施计划 v5 仍未达到可执行基线，继续不放行**
+- 原因：
+  - Claude 修掉了上一轮指出的 Task 2、Task 5、Task 9 三个代码对照问题。
+  - 但 Task 11 仍未覆盖当前 `mml_manager` 已存在且已有测试保护的“文件夹递归删除”入口，跨插件生命周期清理在真实代码路径上仍不完整。
