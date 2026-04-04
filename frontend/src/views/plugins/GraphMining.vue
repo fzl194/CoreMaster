@@ -126,7 +126,8 @@ import {
 import type { DataTableColumns } from "naive-ui";
 import {
   fetchFiles, fetchCandidates, fetchGraphEdges, acceptCandidate,
-  rejectCandidate, markNonGraph, revertCandidate, startMining, fetchJob,
+  rejectCandidate, markNonGraph, revertCandidate, startMining,
+ fetchJob,
 } from "../../api/graph-mining";
 import type { FileMiningInfo, Candidate, GraphEdge, JobInfo } from "../../api/graph-mining";
 import { fetchNeVersions } from "../../api/mml-manager";
@@ -188,11 +189,11 @@ const fileColumns = computed<DataTableColumns<FileMiningInfo>>(() => [
     render: (row) => {
       const statusMap: Record<string, string> = {
         unmined: "未挖掘", queued: "排队中", running: "挖掘中",
-        completed: "已完成", failed: "失败",
+        completed: "已完成", failed: "失败", changed: "已变动",
       };
       const typeMap: Record<string, string> = {
         unmined: "default", queued: "warning", running: "info",
-        completed: "success", failed: "error",
+        completed: "success", failed: "error", changed: "warning",
       };
       return h(NTag, { size: "small", type: (typeMap[row.mining_status] || "default") as any }, {
         default: () => statusMap[row.mining_status] || row.mining_status,
