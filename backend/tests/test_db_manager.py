@@ -12,6 +12,10 @@ from core.services.database import DatabaseService
 from core.services.parser import ParserService
 from core.plugin.loader import PluginLoader
 from core.plugin.context import PluginContext
+from core.events.bus import PluginEventBus
+from core.jobs.service import JobService
+from core.jobs.worker import JobWorker
+from core.jobs.models import CREATE_JOBS_TABLE, CREATE_JOB_ITEMS_TABLE
 
 _TEST_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "test_db_mgr.db"
 
@@ -25,6 +29,16 @@ async def _test_lifespan(app: FastAPI):
 
     parser = ParserService()
     registry.register(ParserService, parser)
+
+    event_bus = PluginEventBus()
+    registry.register(PluginEventBus, event_bus)
+
+    await db.execute(CREATE_JOBS_TABLE)
+    await db.execute(CREATE_JOB_ITEMS_TABLE)
+    job_service = JobService(db)
+    registry.register(JobService, job_service)
+    worker = JobWorker(job_service)
+    registry.register(JobWorker, worker)
 
     loader = PluginLoader(plugins_dir=Path(__file__).resolve().parent.parent / "plugins")
     manifests = loader.scan()

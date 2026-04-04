@@ -13,6 +13,10 @@ from core.services.database import DatabaseService
 from core.services.parser import ParserService
 from core.plugin.loader import PluginLoader
 from core.plugin.context import PluginContext
+from core.events.bus import PluginEventBus
+from core.jobs.service import JobService
+from core.jobs.worker import JobWorker
+from core.jobs.models import CREATE_JOBS_TABLE, CREATE_JOB_ITEMS_TABLE
 
 # 导入 _safe_file_path 做单元测试
 from plugins.mml_manager.main import _safe_file_path, MML_STORAGE_ROOT
@@ -30,6 +34,17 @@ async def _test_lifespan(app: FastAPI):
 
     parser = ParserService()
     registry.register(ParserService, parser)
+
+    event_bus = PluginEventBus()
+    registry.register(PluginEventBus, event_bus)
+
+    # Create job tables and register JobService/JobWorker
+    await db.execute(CREATE_JOBS_TABLE)
+    await db.execute(CREATE_JOB_ITEMS_TABLE)
+    job_service = JobService(db)
+    registry.register(JobService, job_service)
+    worker = JobWorker(job_service)
+    registry.register(JobWorker, worker)
 
     loader = PluginLoader(plugins_dir=Path(__file__).resolve().parent.parent / "plugins")
     manifests = loader.scan()
@@ -156,7 +171,7 @@ async def test_03_delete_ne_version_no_files(client):
 
 
 @pytest.mark.asyncio
-async def test_04_delete_ne_version_with_files_rejected(client):
+async def test_04_delete_ne_version_with_files_cascade(client):
     # Create version
     ne_id, resp = await _create_ne_version(
         client, "huawei", "5GC_DEL", "V300R001"
@@ -170,9 +185,14 @@ async def test_04_delete_ne_version_with_files_rejected(client):
     assert resp.status_code == 200
     assert len(entries) == 1
 
-    # Delete version should be rejected (400)
+    # Delete version should cascade delete files (200)
     resp = await client.delete(f"{BASE}/ne-versions/{ne_id}")
-    assert resp.status_code == 400
+    assert resp.status_code == 200
+
+    # Verify version is gone
+    resp = await client.get(f"{BASE}/ne-versions")
+    versions = resp.json()
+    assert not any(v["id"] == ne_id for v in versions)
 
 
 # ── 5-6. Folder Management ─────────────────────────────────────────────────

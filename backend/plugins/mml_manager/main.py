@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from core.plugin.context import PluginContext
 from core.services.parser import ParserService, read_text_auto, decode_bytes_auto
 from core.services.database import DatabaseService
+from core.events.bus import PluginEventBus
 
 # Ensure candidate_engine can be imported
 _PLUGIN_DIR = Path(__file__).resolve().parent
@@ -56,10 +57,12 @@ class Plugin:
         self.router = APIRouter()
         self.parser: ParserService | None = None
         self.db: DatabaseService | None = None
+        self.event_bus: PluginEventBus | None = None
 
     async def on_register(self, ctx: PluginContext) -> None:
         self.parser = ctx.get_service(ParserService)
         self.db = ctx.get_service(DatabaseService)
+        self.event_bus = ctx.get_service(PluginEventBus)
 
         # Create database tables
         await self.db.execute("""
@@ -266,16 +269,43 @@ class Plugin:
 
         @self.router.delete("/ne-versions/{ne_id}")
         async def delete_ne_version(ne_id: int):
-            # Check for associated files in file_entry table
+            # Cascade: emit file.deleted for all associated files, then delete them
             files = await self.db.query(
-                "SELECT id FROM file_entry WHERE ne_version_id=? AND type='file'", (ne_id,)
+                "SELECT id, ne_version_id FROM file_entry WHERE ne_version_id=? AND type='file'",
+                (ne_id,),
             )
-            if files:
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": "该网元版本下存在关联文件，无法删除"},
+            for f in files:
+                # Emit BEFORE DB delete (handler may need ne_version_id)
+                await self.event_bus.emit("file.deleted", {
+                    "file_entry_id": f["id"],
+                    "ne_version_id": ne_id,
+                })
+                # Delete disk file
+                file_rows = await self.db.query(
+                    "SELECT file_path FROM file_entry WHERE id=?", (f["id"],)
                 )
+                if file_rows:
+                    p = _safe_file_path(file_rows[0]["file_path"])
+                    if p and p.exists():
+                        p.unlink()
+                await self.db.execute("DELETE FROM file_entry WHERE id=?", (f["id"],))
+
+            # Delete associated folders
+            folders = await self.db.query(
+                "SELECT id FROM file_entry WHERE ne_version_id=? AND type='folder'",
+                (ne_id,),
+            )
+            for folder in folders:
+                folder_path = MML_STORAGE_ROOT / str(folder["id"])
+                if folder_path.exists():
+                    shutil.rmtree(str(folder_path))
+                await self.db.execute("DELETE FROM file_entry WHERE id=?", (folder["id"],))
+
+            # Delete version, then emit ne_version.deleted
             await self.db.execute("DELETE FROM ne_version WHERE id=?", (ne_id,))
+            await self.event_bus.emit("ne_version.deleted", {
+                "ne_version_id": ne_id,
+            })
             return {"ok": True}
 
         # ── File Entry Management ───────────────────────────────────────
@@ -407,6 +437,18 @@ class Plugin:
             entry = rows[0]
 
             if entry["type"] == "file":
+                # Get ne_version_id BEFORE delete
+                ne_rows = await self.db.query(
+                    "SELECT ne_version_id FROM file_entry WHERE id=?", (entry_id,)
+                )
+                ne_version_id = ne_rows[0]["ne_version_id"] if ne_rows else None
+
+                # Emit file.deleted BEFORE DB delete
+                await self.event_bus.emit("file.deleted", {
+                    "file_entry_id": entry_id,
+                    "ne_version_id": ne_version_id,
+                })
+
                 # Delete single file: DB record + disk file
                 file_rows = await self.db.query(
                     "SELECT file_path FROM file_entry WHERE id=?", (entry_id,)
@@ -449,6 +491,18 @@ class Plugin:
                     folder_path = MML_STORAGE_ROOT / str(fid)
                     if folder_path.exists():
                         shutil.rmtree(str(folder_path))
+
+                # Emit file.deleted for each file BEFORE batch DB delete
+                for eid, etype in all_ids:
+                    if etype == "file":
+                        ne_rows = await self.db.query(
+                            "SELECT ne_version_id FROM file_entry WHERE id=?", (eid,)
+                        )
+                        ne_version_id = ne_rows[0]["ne_version_id"] if ne_rows else None
+                        await self.event_bus.emit("file.deleted", {
+                            "file_entry_id": eid,
+                            "ne_version_id": ne_version_id,
+                        })
 
                 # Delete all database records
                 for eid, _ in all_ids:
@@ -596,11 +650,12 @@ class Plugin:
         @self.router.put("/files/{file_id}/content")
         async def update_file_content(file_id: int, payload: dict):
             rows = await self.db.query(
-                "SELECT id, file_path FROM file_entry WHERE id=? AND type='file'",
+                "SELECT id, ne_version_id, file_path FROM file_entry WHERE id=? AND type='file'",
                 (file_id,),
             )
             if not rows:
                 return JSONResponse(status_code=404, content={"detail": "文件不存在"})
+            ne_version_id = rows[0].get("ne_version_id")
             p = _safe_file_path(rows[0]["file_path"])
             if p is None:
                 return JSONResponse(status_code=400, content={"detail": "文件路径无效"})
@@ -611,6 +666,11 @@ class Plugin:
                 "UPDATE file_entry SET file_size=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (len(new_content.encode("utf-8")), file_id),
             )
+            # Emit content replaced event
+            await self.event_bus.emit("file.content_replaced", {
+                "file_entry_id": file_id,
+                "ne_version_id": ne_version_id,
+            })
             return {"ok": True}
 
         @self.router.get("/files/{file_id}/download")
