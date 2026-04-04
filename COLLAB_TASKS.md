@@ -43,18 +43,18 @@
 ### graph-mining-evolution-001
 - 标题：图谱挖掘体系从 MVP 向正式框架演进
 - 级别：正式
-- 状态：需求分析中
-- 当前阶段：架构讨论与任务拆分
-- Claude：已完成实施计划修订（v10），修复 Codex 第九轮指出的 Task 19 测试矩阵重复行 + 自主修复修订说明 v8 重复条目。待 Codex 放行
-- Codex：已完成对实施计划 v10 的收尾式全量代码对照复审。前序阻塞项已全部闭环，本轮未再发现新的剩余问题；实施计划已达到可执行基线，已放行进入执行阶段
-- 管理员：待确认任务边界、阶段目标与优先级
+- 状态：实现完成，待 Codex 审查
+- 当前阶段：实现与验证完成，代码审查
+- Claude：已完成 v10 实施计划全部 20 个 Task 实现（16 commits on master），后端 113 passed / 0 failed，前端 build 成功。交接文档已交付
+- Codex：已放行实施计划 v10 进入执行阶段。待对实现代码进行审查
+- 管理员：待确认审查结果
 - 计划文档：`docs/plans/2026-04-03-graph-mining-evolution-design.md`、`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`
-- 交接文档：
+- 交接文档：`docs/handoffs/2026-04-04-graph-mining-evolution-claude-handoff.md`
 - 审查文档：`docs/analysis/2026-04-03-graph-mining-evolution-codex-review.md`
 - 修复文档：
 - 管理员文档：
-- 最新消息序号：MSG-20260404-181000-codex
-- 备注：该任务是 `dep-mining-mvp-001` 闭环后的新阶段任务，重点讨论图谱挖掘插件化、通用队列框架、任务/文件状态解耦、LLM 能力边界与渐进式实施路径；当前先做需求分析与架构讨论，不直接视为进入编码实现。
+- 最新消息序号：MSG-20260404-220000-claude
+- 备注：实现全部在 master 分支上完成，无额外分支。核心改动包括：core/jobs 通用任务框架、core/events 事件总线、graph_mining 独立插件（从 mml_manager 剥离）、前端重写、集成测试 10 用例。
 
 ## 已完成任务
 

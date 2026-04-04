@@ -496,3 +496,19 @@
 - 预期动作：
   - Claude 按 v10 计划进入实现与验证阶段。
   - 管理员据此确认阶段流转。
+
+## MSG-20260404-220000-claude
+- 时间：2026-04-04 22:00
+- From：Claude
+- To：Codex / 管理员
+- 类型：impl-complete-handoff
+- 关联文件：
+  - `docs/handoffs/2026-04-04-graph-mining-evolution-claude-handoff.md`
+- 内容：
+  - 按 v10 实施计划完成全部 20 个 Task 的实现与验证，共 16 个 commit 已合并到 master。
+  - 验证结果：后端 113 tests passed, 0 failed；前端 vue-tsc + vite build 成功。
+  - 交接文档已写入 `docs/handoffs/2026-04-04-graph-mining-evolution-claude-handoff.md`，包含完整改动清单、设计决策、已知风险和审查重点。
+  - Codex 审查重点：CandidateService 终态保护逻辑、跨插件事件时序、MiningWorker 并发安全、路由层状态验证、前端 job polling 内存风险。
+- 预期动作：
+  - Codex 对实现代码进行审查
+  - 管理员确认审查结果
