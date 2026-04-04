@@ -55,14 +55,12 @@ export interface Candidate {
   ref_param: string;
   def_command: string;
   def_param: string;
-  status: string;
+  status: "pending" | "graph" | "rejected";
   confidence: number;
   scores: CandidateScores;
   evidence: CandidateEvidence;
   graph_edge_id: number | null;
-  review_route: string | null;
-  non_graph_reason: string | null;
-  non_graph_reviewer: string | null;
+  review_route: "auto" | "llm" | "manual" | null;
   active_algorithm_version: string;
   llm_assessment_json: string | null;
   created_at: string;
@@ -169,18 +167,6 @@ export async function rejectCandidate(
   const { data } = await api.post(
     `/plugins/graph_mining/candidates/${id}/reject`,
     { reviewer }
-  );
-  return data;
-}
-
-export async function markNonGraph(
-  id: number,
-  reason: string,
-  reviewer: string
-): Promise<{ ok: boolean }> {
-  const { data } = await api.post(
-    `/plugins/graph_mining/candidates/${id}/mark-non-graph`,
-    { reason, reviewer }
   );
   return data;
 }

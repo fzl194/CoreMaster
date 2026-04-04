@@ -115,18 +115,6 @@
       </n-drawer-content>
     </n-drawer>
 
-    <!-- Mark Non-Graph Modal -->
-    <n-modal v-model:show="showMarkNonGraph">
-      <n-card title="标记为非图谱依赖" style="width: 400px">
-        <n-input v-model:value="nonGraphReason" type="textarea" placeholder="请输入原因" />
-        <template #action>
-          <n-space>
-            <n-button @click="showMarkNonGraph = false">取消</n-button>
-            <n-button type="warning" @click="confirmMarkNonGraph">确认</n-button>
-          </n-space>
-        </template>
-      </n-card>
-    </n-modal>
   </div>
 </template>
 
@@ -140,8 +128,8 @@ import {
 import type { DataTableColumns } from "naive-ui";
 import {
   fetchFiles, fetchCandidates, fetchGraphEdges, acceptCandidate,
-  rejectCandidate, markNonGraph, revertCandidate, startMining,
-  fetchJobs, fetchJob, cancelJob,
+  rejectCandidate, revertCandidate, startMining,
+  fetchJobs, cancelJob,
 } from "../../api/graph-mining";
 import type { FileMiningInfo, Candidate, GraphEdge, JobInfo, JobItemInfo } from "../../api/graph-mining";
 import { fetchNeVersions } from "../../api/mml-manager";
@@ -180,9 +168,7 @@ const neVersionOptions = computed(() =>
 const statusFilterOptions = [
   { label: "待审核", value: "pending" },
   { label: "已入图谱", value: "graph" },
-  { label: "非图谱", value: "non_graph" },
   { label: "已拒绝", value: "rejected" },
-  { label: "待人工审核", value: "ready_for_review" },
 ];
 
 const runningCount = computed(() =>
@@ -296,28 +282,36 @@ const candidateColumns = computed<DataTableColumns<Candidate>>(() => [
     render: (row) => row.confidence.toFixed(4),
   },
   {
-    title: "状态", key: "status", width: 100,
+    title: "等级", key: "review_route", width: 80,
     render: (row) => {
-      const typeMap: Record<string, string> = {
-        pending: "warning", graph: "success", non_graph: "info", rejected: "error",
-        ready_for_review: "warning",
-      };
-      return h(NTag, { size: "small", type: (typeMap[row.status] || "default") as any }, {
-        default: () => row.status,
+      if (!row.review_route) return "—";
+      const typeMap: Record<string, string> = { auto: "success", llm: "warning", manual: "default" };
+      const labelMap: Record<string, string> = { auto: "高", llm: "中", manual: "低" };
+      return h(NTag, { size: "small", type: (typeMap[row.review_route] || "default") as any }, {
+        default: () => labelMap[row.review_route] || row.review_route,
       });
     },
   },
   {
-    title: "操作", key: "actions", width: 280,
+    title: "状态", key: "status", width: 100,
+    render: (row) => {
+      const typeMap: Record<string, string> = { pending: "warning", graph: "success", rejected: "error" };
+      const labelMap: Record<string, string> = { pending: "待审核", graph: "已入图谱", rejected: "已拒绝" };
+      return h(NTag, { size: "small", type: (typeMap[row.status] || "default") as any }, {
+        default: () => labelMap[row.status] || row.status,
+      });
+    },
+  },
+  {
+    title: "操作", key: "actions", width: 200,
     render: (row) => {
       const btns: any[] = [];
       btns.push(h(NButton, { size: "tiny", quaternary: true, onClick: () => showEvidenceDrawer(row) }, { default: () => "详情" }));
-      if (row.status === "pending" || row.status === "ready_for_review") {
+      if (row.status === "pending") {
         btns.push(h(NButton, { size: "tiny", type: "success", quaternary: true, onClick: () => handleAccept(row.id) }, { default: () => "接受" }));
         btns.push(h(NButton, { size: "tiny", type: "error", quaternary: true, onClick: () => handleReject(row.id) }, { default: () => "拒绝" }));
-        btns.push(h(NButton, { size: "tiny", type: "warning", quaternary: true, onClick: () => openMarkNonGraph(row.id) }, { default: () => "非图谱" }));
       }
-      if (row.status === "graph" || row.status === "non_graph") {
+      if (row.status === "graph" || row.status === "rejected") {
         btns.push(h(NButton, { size: "tiny", quaternary: true, onClick: () => handleRevert(row.id) }, { default: () => "回退" }));
       }
       return h(NSpace, { size: 4 }, { default: () => btns });

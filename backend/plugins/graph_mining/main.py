@@ -64,8 +64,6 @@ class Plugin:
                 review_history_json TEXT DEFAULT '[]',
                 graph_edge_id INTEGER,
                 review_route TEXT,
-                non_graph_reason TEXT,
-                non_graph_reviewer TEXT,
                 active_algorithm_version TEXT DEFAULT 'v1',
                 llm_assessment_json TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -312,7 +310,7 @@ class Plugin:
             rows = await self.db.query(
                 f"SELECT id, ne_version_id, ref_command, ref_param, def_command, def_param, "
                 f"status, confidence, scores_json, evidence_json, "
-                f"graph_edge_id, review_route, non_graph_reason, non_graph_reviewer, "
+                f"graph_edge_id, review_route, "
                 f"active_algorithm_version, llm_assessment_json, created_at, updated_at "
                 f"FROM dependency_candidate {where} ORDER BY confidence DESC",
                 tuple(params),
@@ -409,7 +407,7 @@ class Plugin:
 
         @self.router.post("/candidates/{candidate_id}/reject")
         async def reject_candidate(candidate_id: int, payload: dict):
-            """Reject a candidate — no graph edge created. Status → 'rejected'."""
+            """Reject a candidate. Status → 'rejected'."""
             reviewer = payload.get("reviewer", "anonymous")
 
             rows = await self.db.query(
@@ -420,11 +418,10 @@ class Plugin:
                 return JSONResponse(status_code=404, content={"detail": "候选记录不存在"})
 
             current = rows[0]["status"]
-            pending_like = ("pending", "ready_for_review")
-            if current not in pending_like:
+            if current != "pending":
                 return JSONResponse(
                     status_code=400,
-                    content={"detail": f"只能从 pending/ready_for_review 状态拒绝，当前: {current}"},
+                    content={"detail": f"只能从 pending 状态拒绝，当前: {current}"},
                 )
 
             await self.db.execute(
@@ -445,55 +442,9 @@ class Plugin:
 
             return {"ok": True, "candidate_id": candidate_id}
 
-        @self.router.post("/candidates/{candidate_id}/mark-non-graph")
-        async def mark_non_graph(candidate_id: int, payload: dict):
-            """Mark a candidate as non-graph dependency."""
-            reason = payload.get("reason", "")
-            reviewer = payload.get("reviewer", "anonymous")
-
-            rows = await self.db.query(
-                "SELECT id, status, review_history_json FROM dependency_candidate WHERE id=?",
-                (candidate_id,),
-            )
-            if not rows:
-                return JSONResponse(status_code=404, content={"detail": "候选记录不存在"})
-
-            cand = rows[0]
-            current = cand["status"]
-            pending_like = ("pending", "ready_for_review")
-            if current not in pending_like:
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": f"只能从 pending/ready_for_review 状态标记非图谱，当前: {current}"},
-                )
-
-            review_entry = {"action": "mark_non_graph", "reviewer": reviewer, "reason": reason}
-            current_history = json.loads(cand.get("review_history_json") or "[]")
-            current_history.append(review_entry)
-
-            await self.db.execute(
-                "UPDATE dependency_candidate SET status='non_graph', "
-                "non_graph_reason=?, non_graph_reviewer=?, review_route=NULL, "
-                "review_history_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (reason, reviewer,
-                 json.dumps(current_history, ensure_ascii=False), candidate_id),
-            )
-
-            # Create changelog
-            await self.db.execute(
-                "INSERT INTO graph_changelog "
-                "(candidate_id, change_type, snapshot_after, trigger_type, trigger_id) "
-                "VALUES (?, 'mark_non_graph', ?, 'human', ?)",
-                (candidate_id,
-                 json.dumps({"status": "non_graph", "reason": reason}, ensure_ascii=False),
-                 reviewer),
-            )
-
-            return {"ok": True, "candidate_id": candidate_id}
-
         @self.router.post("/candidates/{candidate_id}/revert")
         async def revert_candidate(candidate_id: int, payload: dict):
-            """Revert a candidate: graph→pending (revoke edge), non_graph→pending."""
+            """Revert: graph→pending (revoke edge), rejected→pending."""
             reviewer = payload.get("reviewer", "anonymous")
 
             rows = await self.db.query(
@@ -508,10 +459,10 @@ class Plugin:
             cand = rows[0]
             current_status = cand["status"]
 
-            if current_status not in ("graph", "non_graph"):
+            if current_status not in ("graph", "rejected"):
                 return JSONResponse(
                     status_code=400,
-                    content={"detail": f"只能回退 graph 或 non_graph 状态，当前: {current_status}"},
+                    content={"detail": f"只能回退 graph 或 rejected 状态，当前: {current_status}"},
                 )
 
             review_entry = {"action": "reverted", "reviewer": reviewer, "from_status": current_status}
@@ -529,37 +480,20 @@ class Plugin:
                         (edge_id,),
                     )
 
-                await self.db.execute(
-                    "UPDATE dependency_candidate SET status='pending', graph_edge_id=NULL, "
-                    "review_route=?, review_history_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (review_route, json.dumps(current_history, ensure_ascii=False), candidate_id),
-                )
+            await self.db.execute(
+                "UPDATE dependency_candidate SET status='pending', graph_edge_id=NULL, "
+                "review_route=?, review_history_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (review_route, json.dumps(current_history, ensure_ascii=False), candidate_id),
+            )
 
-                await self.db.execute(
-                    "INSERT INTO graph_changelog "
-                    "(candidate_id, change_type, snapshot_after, trigger_type, trigger_id) "
-                    "VALUES (?, 'revert', ?, 'human', ?)",
-                    (candidate_id,
-                     json.dumps({"status": "pending", "from": "graph"}, ensure_ascii=False),
-                     reviewer),
-                )
-
-            elif current_status == "non_graph":
-                await self.db.execute(
-                    "UPDATE dependency_candidate SET status='pending', "
-                    "non_graph_reason=NULL, non_graph_reviewer=NULL, review_route=?, "
-                    "review_history_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (review_route, json.dumps(current_history, ensure_ascii=False), candidate_id),
-                )
-
-                await self.db.execute(
-                    "INSERT INTO graph_changelog "
-                    "(candidate_id, change_type, snapshot_after, trigger_type, trigger_id) "
-                    "VALUES (?, 'revert', ?, 'human', ?)",
-                    (candidate_id,
-                     json.dumps({"status": "pending", "from": "non_graph"}, ensure_ascii=False),
-                     reviewer),
-                )
+            await self.db.execute(
+                "INSERT INTO graph_changelog "
+                "(candidate_id, change_type, snapshot_after, trigger_type, trigger_id) "
+                "VALUES (?, 'revert', ?, 'human', ?)",
+                (candidate_id,
+                 json.dumps({"status": "pending", "from": current_status}, ensure_ascii=False),
+                 reviewer),
+            )
 
             return {"ok": True, "candidate_id": candidate_id}
 

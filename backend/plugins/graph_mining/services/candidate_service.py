@@ -56,7 +56,7 @@ class CandidateService:
 
         # Zero contributions case
         if not contribs:
-            if cand_status in ("graph", "non_graph"):
+            if cand_status in ("graph", "rejected"):
                 # Terminal state: clear scores but keep record
                 zero_scores = json.dumps({
                     "support": 0.0, "distinctiveness": 0.0,
@@ -74,7 +74,7 @@ class CandidateService:
                         "updated_at=CURRENT_TIMESTAMP WHERE id=?",
                         (empty_evidence, cand["graph_edge_id"]),
                     )
-            elif cand_status in ("pending", "ready_for_review", "rejected"):
+            elif cand_status == "pending":
                 await self.db.execute(
                     "DELETE FROM dependency_candidate WHERE id=?", (cand_id,)
                 )
@@ -164,23 +164,15 @@ class CandidateService:
         evidence_json = json.dumps(new_evidence, ensure_ascii=False)
 
         # §6.6 Terminal state protection
-        if cand_status in ("graph", "non_graph"):
-            # Only update scores/evidence, don't change status
+        if cand_status in ("graph", "rejected"):
+            # Terminal: only update scores/evidence, don't change status
             await self.db.execute(
                 "UPDATE dependency_candidate SET confidence=?, scores_json=?, evidence_json=?, "
                 "updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (new_confidence, scores_json, evidence_json, cand_id),
             )
-        elif cand_status == "rejected":
-            # New evidence: reactivate to pending
-            review_route = _determine_review_route(new_confidence)
-            await self.db.execute(
-                "UPDATE dependency_candidate SET status='pending', confidence=?, scores_json=?, "
-                "evidence_json=?, review_route=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (new_confidence, scores_json, evidence_json, review_route, cand_id),
-            )
         else:
-            # pending / ready_for_review: normal update
+            # pending: normal update with review_route
             review_route = _determine_review_route(new_confidence)
             await self.db.execute(
                 "UPDATE dependency_candidate SET confidence=?, scores_json=?, evidence_json=?, "

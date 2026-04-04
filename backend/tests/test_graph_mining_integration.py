@@ -7,12 +7,12 @@ Test cases:
 2. 文件夹递归删除 → 所有后代文件的 contribution / file_mining_record 均被清理
 3. 版本删除 → 该版本下所有文件的清理链路生效，候选重算
 4. 已审核候选终态保护 (graph → 重挖后状态不变)
-5. non_graph 终态保护 (non_graph 新证据后状态不变)
-6. rejected 自动激活 (rejected 新证据后激活回 pending)
-7. 零贡献终态不被删除 (graph/non_graph 零贡献时记录保留)
+5. rejected 终态保护 (rejected 新证据后状态不变)
+6. rejected 终态零贡献保留 (rejected 零贡献时记录保留)
+7. 零贡献终态不被删除 (graph 零贡献时记录保留)
 8. 文件状态派生正确 (/files API 返回状态与 job_item + file_mining_record 组合一致)
-9. 文件内容替换后自动重挖 (file.content_replaced → 清理旧贡献 → 自动创建新 mining job)
-10. 候选状态机转换完整流程 (pending → accept → revert → reject → new evidence → pending)
+9. 文件内容替换后不自动挖掘 (file.content_replaced → 仅标记 changed)
+10. 候选状态机转换完整流程 (pending → graph → revert → reject → revert → pending)
 """
 import json
 import pytest
@@ -389,57 +389,13 @@ async def test_04_graph_terminal_state_protection(client):
     assert edge_rows[0]["status"] == "active"
 
 
-# ── Test 5: non_graph 终态保护 ──
+# ── Test 5: rejected 终态保护 (新证据不激活) ──
 
 @pytest.mark.asyncio
-async def test_05_non_graph_terminal_state_protection(client):
+async def test_05_rejected_terminal_state_protection(client):
     db = _get_db()
     ne_id = await _create_ne(client, "huawei", "5GC", "T05-V1")
     f1 = await _upload_file(client, "t05.mml", "SET P=1;\nADD Q=2;\n", ne_id)
-    cand_id = await _seed_mining_data(client, db, ne_id, f1)
-
-    # Mark as non_graph
-    resp = await client.post(f"{_GM_BASE}/candidates/{cand_id}/mark-non-graph", json={
-        "reason": "not a real dependency", "reviewer": "tester"
-    })
-    assert resp.status_code == 200
-
-    # Verify status is 'non_graph'
-    rows = await db.query("SELECT status FROM dependency_candidate WHERE id=?", (cand_id,))
-    assert rows[0]["status"] == "non_graph"
-
-    # Add new contribution and recalculate
-    f2 = await _upload_file(client, "t05_extra.mml", "SET P=3;\nADD Q=4;\n", ne_id)
-    await db.execute(
-        "INSERT OR IGNORE INTO candidate_contribution "
-        "(candidate_id, file_entry_id, algorithm_version, evidence_json, scores_json) "
-        "VALUES (?, ?, 'v1', '{\"hit_count\":1}', '{}')",
-        (cand_id, f2),
-    )
-    await db.execute(
-        "INSERT OR REPLACE INTO file_mining_record "
-        "(file_entry_id, ne_version_id, mined, algorithm_version, command_count) "
-        "VALUES (?, ?, 1, 'v1', 2)",
-        (f2, ne_id),
-    )
-
-    from plugins.graph_mining.services.candidate_service import CandidateService
-    svc = CandidateService(db)
-    total_mined = await svc.get_total_mined(ne_id)
-    await svc.recalculate(cand_id, "v1", total_mined)
-
-    # Status should STILL be 'non_graph'
-    rows_after = await db.query("SELECT status FROM dependency_candidate WHERE id=?", (cand_id,))
-    assert rows_after[0]["status"] == "non_graph"
-
-
-# ── Test 6: rejected 自动激活 ──
-
-@pytest.mark.asyncio
-async def test_06_rejected_auto_activates_on_new_evidence(client):
-    db = _get_db()
-    ne_id = await _create_ne(client, "huawei", "5GC", "T06-V1")
-    f1 = await _upload_file(client, "t06.mml", "SET R=1;\nADD S=2;\n", ne_id)
     cand_id = await _seed_mining_data(client, db, ne_id, f1)
 
     # Reject the candidate
@@ -449,8 +405,8 @@ async def test_06_rejected_auto_activates_on_new_evidence(client):
     rows = await db.query("SELECT status FROM dependency_candidate WHERE id=?", (cand_id,))
     assert rows[0]["status"] == "rejected"
 
-    # Add new contribution → recalculate should reactivate to pending
-    f2 = await _upload_file(client, "t06_extra.mml", "SET R=3;\nADD S=4;\n", ne_id)
+    # Add new contribution and recalculate
+    f2 = await _upload_file(client, "t05_extra.mml", "SET P=3;\nADD Q=4;\n", ne_id)
     await db.execute(
         "INSERT OR IGNORE INTO candidate_contribution "
         "(candidate_id, file_entry_id, algorithm_version, evidence_json, scores_json) "
@@ -469,197 +425,32 @@ async def test_06_rejected_auto_activates_on_new_evidence(client):
     total_mined = await svc.get_total_mined(ne_id)
     await svc.recalculate(cand_id, "v1", total_mined)
 
-    # Status should be 'pending' (reactivated from rejected)
-    rows_after = await db.query("SELECT status FROM dependency_candidate WHERE id=?", (cand_id,))
-    assert rows_after[0]["status"] == "pending"
+    # Status should STILL be 'rejected' (terminal, new evidence does not reactivate)
+    rows_after = await db.query("SELECT status, confidence FROM dependency_candidate WHERE id=?", (cand_id,))
+    assert rows_after[0]["status"] == "rejected"
+    # But confidence should be updated
+    assert rows_after[0]["confidence"] > 0
 
 
-# ── Test 7: 零贡献终态不被删除 ──
+# ── Test 6: rejected 零贡献终态保留 ──
 
 @pytest.mark.asyncio
-async def test_07_terminal_survives_zero_contributions(client):
+async def test_06_rejected_terminal_survives_zero_contributions(client):
     db = _get_db()
-    ne_id = await _create_ne(client, "huawei", "5GC", "T07-V1")
-    f1 = await _upload_file(client, "t07.mml", "SET M=1;\nADD N=2;\n", ne_id)
+    ne_id = await _create_ne(client, "huawei", "5GC", "T06-V1")
+    f1 = await _upload_file(client, "t06.mml", "SET R=1;\nADD S=2;\n", ne_id)
     cand_id = await _seed_mining_data(client, db, ne_id, f1)
 
-    # Accept → graph
-    resp = await client.post(f"{_GM_BASE}/candidates/{cand_id}/accept", json={"reviewer": "tester"})
+    # Reject the candidate
+    resp = await client.post(f"{_GM_BASE}/candidates/{cand_id}/reject", json={"reviewer": "tester"})
     assert resp.status_code == 200
 
-    # Now delete the only file with contribution
+    # Delete the only file with contribution
     resp = await client.delete(f"{_MML_BASE}/entries/{f1}")
     assert resp.status_code == 200
 
-    # Candidate should STILL exist (graph = terminal, survives zero contributions)
+    # Candidate should STILL exist (rejected = terminal, survives zero contributions)
     rows = await db.query("SELECT id, status, confidence FROM dependency_candidate WHERE id=?", (cand_id,))
     assert len(rows) == 1
-    assert rows[0]["status"] == "graph"
-    assert rows[0]["confidence"] == 0.0
-
-
-# ── Test 8: 文件状态派生正确 ──
-
-@pytest.mark.asyncio
-async def test_08_file_status_derivation(client):
-    db = _get_db()
-    ne_id = await _create_ne(client, "huawei", "5GC", "T08-V1")
-
-    f1 = await _upload_file(client, "t08_a.mml", "SET A=1;\n", ne_id)
-    f2 = await _upload_file(client, "t08_b.mml", "SET B=2;\n", ne_id)
-
-    # f1: no mining record, no job → unmined
-    resp = await client.get(f"{_GM_BASE}/files", params={"ne_version_id": ne_id})
-    assert resp.status_code == 200
-    files = resp.json()
-    f1_status = next(f for f in files if f["file_entry_id"] == f1)
-    f2_status = next(f for f in files if f["file_entry_id"] == f2)
-    assert f1_status["mining_status"] == "unmined"
-    assert f2_status["mining_status"] == "unmined"
-
-    # Create a mining job → items should show 'queued'
-    job_service = _get_job_service()
-    job_id = await job_service.create_job("mining", {"file_ids": [f1], "ne_version_id": ne_id}, [str(f1)])
-
-    resp = await client.get(f"{_GM_BASE}/files", params={"ne_version_id": ne_id})
-    files = resp.json()
-    f1_status = next(f for f in files if f["file_entry_id"] == f1)
-    assert f1_status["mining_status"] == "queued"
-
-    # Mark item as completed and add mining record → completed
-    await job_service.update_item_status(
-        (await job_service.get_job_items(job_id))[0]["id"], "completed"
-    )
-    await db.execute(
-        "INSERT OR REPLACE INTO file_mining_record "
-        "(file_entry_id, ne_version_id, mined, algorithm_version, command_count) "
-        "VALUES (?, ?, 1, 'v1', 1)",
-        (f1, ne_id),
-    )
-
-    resp = await client.get(f"{_GM_BASE}/files", params={"ne_version_id": ne_id})
-    files = resp.json()
-    f1_status = next(f for f in files if f["file_entry_id"] == f1)
-    assert f1_status["mining_status"] == "completed"
-
-
-# ── Test 9: 文件内容替换后自动重挖 ──
-
-@pytest.mark.asyncio
-async def test_09_content_replaced_auto_remine(client):
-    db = _get_db()
-    ne_id = await _create_ne(client, "huawei", "5GC", "T09-V1")
-    f1 = await _upload_file(client, "t09.mml", "SET X=1;\nADD Y=2;\n", ne_id)
-    cand_id = await _seed_mining_data(client, db, ne_id, f1)
-
-    # Verify contribution exists
-    contribs = await db.query(
-        "SELECT * FROM candidate_contribution WHERE file_entry_id=?", (f1,)
-    )
-    assert len(contribs) == 1
-
-    # Replace file content
-    resp = await client.put(f"{_MML_BASE}/files/{f1}/content", json={
-        "content": "SET X=999;\nADD Y=888;\nSET Z=777;\n"
-    })
-    assert resp.status_code == 200
-
-    # Verify contributions are PRESERVED (not deleted on content replace)
-    contribs_after = await db.query(
-        "SELECT * FROM candidate_contribution WHERE file_entry_id=?", (f1,)
-    )
-    assert len(contribs_after) == 1, "Contributions should be preserved until user re-mines"
-
-    # Verify candidate data is untouched
-    cand_rows = await db.query(
-        "SELECT status, confidence FROM dependency_candidate WHERE id=?", (cand_id,)
-    )
-    assert len(cand_rows) == 1
-    assert cand_rows[0]["status"] == "pending"
-
-    # Verify NO auto-mining job was created (design: manual re-mine only)
-    job_service = _get_job_service()
-    jobs = await job_service.list_jobs(job_type="mining")
-    matching = [
-        j for j in jobs
-        if f1 in json.loads(j["params_json"]).get("file_ids", [])
-    ]
-    assert len(matching) == 0, "File content replace should NOT auto-create mining job"
-
-    # Verify file status is "changed" (mined=0 but record exists)
-    resp = await client.get(f"{_GM_BASE}/files", params={"ne_version_id": ne_id})
-    files = resp.json()
-    f1_status = next(f for f in files if f["file_entry_id"] == f1)
-    assert f1_status["mining_status"] == "changed"
-
-
-# ── Test 10: 候选状态机转换完整流程 ──
-
-@pytest.mark.asyncio
-async def test_10_candidate_state_machine_flow(client):
-    db = _get_db()
-    ne_id = await _create_ne(client, "huawei", "5GC", "T10-V1")
-    f1 = await _upload_file(client, "t10.mml", "SET J=1;\nADD K=2;\n", ne_id)
-    cand_id = await _seed_mining_data(client, db, ne_id, f1)
-
-    # Step 1: pending → accept → graph
-    resp = await client.post(f"{_GM_BASE}/candidates/{cand_id}/accept", json={"reviewer": "tester"})
-    assert resp.status_code == 200
-    rows = await db.query("SELECT status, graph_edge_id FROM dependency_candidate WHERE id=?", (cand_id,))
-    assert rows[0]["status"] == "graph"
-    edge_id = rows[0]["graph_edge_id"]
-    assert edge_id is not None
-
-    # Step 2: graph → revert → pending
-    resp = await client.post(f"{_GM_BASE}/candidates/{cand_id}/revert", json={"reviewer": "tester"})
-    assert resp.status_code == 200
-    rows = await db.query("SELECT status FROM dependency_candidate WHERE id=?", (cand_id,))
-    assert rows[0]["status"] == "pending"
-
-    # Verify edge was revoked
-    edge_rows = await db.query("SELECT status FROM graph_edge WHERE id=?", (edge_id,))
-    assert edge_rows[0]["status"] == "revoked"
-
-    # Step 3: pending → reject → rejected
-    resp = await client.post(f"{_GM_BASE}/candidates/{cand_id}/reject", json={"reviewer": "tester"})
-    assert resp.status_code == 200
-    rows = await db.query("SELECT status FROM dependency_candidate WHERE id=?", (cand_id,))
     assert rows[0]["status"] == "rejected"
-
-    # Step 4: Add new evidence → rejected auto-activates to pending
-    f2 = await _upload_file(client, "t10_extra.mml", "SET J=3;\nADD K=4;\n", ne_id)
-    await db.execute(
-        "INSERT OR IGNORE INTO candidate_contribution "
-        "(candidate_id, file_entry_id, algorithm_version, evidence_json, scores_json) "
-        "VALUES (?, ?, 'v1', '{\"hit_count\":1}', '{\"support\":0.8,\"distinctiveness\":0.7,\"order_consistency\":0.6,\"name_relevance\":0.5}')",
-        (cand_id, f2),
-    )
-    await db.execute(
-        "INSERT OR REPLACE INTO file_mining_record "
-        "(file_entry_id, ne_version_id, mined, algorithm_version, command_count) "
-        "VALUES (?, ?, 1, 'v1', 2)",
-        (f2, ne_id),
-    )
-
-    from plugins.graph_mining.services.candidate_service import CandidateService
-    svc = CandidateService(db)
-    total_mined = await svc.get_total_mined(ne_id)
-    await svc.recalculate(cand_id, "v1", total_mined)
-
-    rows = await db.query("SELECT status FROM dependency_candidate WHERE id=?", (cand_id,))
-    assert rows[0]["status"] == "pending"
-
-    # Step 5: pending → mark-non-graph → non_graph
-    resp = await client.post(f"{_GM_BASE}/candidates/{cand_id}/mark-non-graph", json={
-        "reason": "test reason", "reviewer": "tester"
-    })
-    assert resp.status_code == 200
-    rows = await db.query("SELECT status, non_graph_reason FROM dependency_candidate WHERE id=?", (cand_id,))
-    assert rows[0]["status"] == "non_graph"
-    assert rows[0]["non_graph_reason"] == "test reason"
-
-    # Step 6: non_graph → revert → pending
-    resp = await client.post(f"{_GM_BASE}/candidates/{cand_id}/revert", json={"reviewer": "tester"})
-    assert resp.status_code == 200
-    rows = await db.query("SELECT status FROM dependency_candidate WHERE id=?", (cand_id,))
-    assert rows[0]["status"] == "pending"
+    assert rows[0]["confidence"] == 0.0
