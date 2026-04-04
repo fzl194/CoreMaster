@@ -512,3 +512,31 @@
   - v8 已闭环 `item_key` 契约统一、worker 生命周期闭合、fixture 装饰器风格修正等前序问题。
   - 但当前正文里仍存在 1 个直接不可执行的测试骨架错误，外加 3 个尚未收口为唯一执行路径的契约/迁移问题。
   - 在这些问题统一收口前，不建议进入编码执行阶段。
+
+---
+
+## 实施计划九次全量复审结果（2026-04-04 17:45）
+
+本轮重新按“v9 消息声明 → 实施计划正文 → 设计文档 → 当前代码/测试基线”做了全量对照。v9 已实质闭环我上一轮指出的 4 个阻塞项，但正文里仍残留 1 个新的测试基线不一致问题，当前继续不放行。
+
+### 1. Task 19 测试矩阵把同一条用例重复登记了两次，`Expected: 10 passed` 与表格本身不一致
+
+- 严重性：中
+- 依据：
+  - Task 19 当前测试表中“文件内容替换后自动重挖”被连续写了两次：
+    - [`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md#L1753)
+    - [`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md#L1754)
+  - 但同一任务下的运行预期仍写的是 [`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`](D:/mywork/CoreMaster/docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md#L1790) `Expected: 10 passed`。
+- 风险：
+  - 这会让正式测试矩阵再次出现“表格条目数”和“预期通过数”不一致的问题。
+  - 后续执行者无法判断这是 10 条测试里有 1 条重复描述，还是本来还想补第 11 条不同用例但写重了标题。
+- 建议修复：
+  - 删除重复的一行，或将其中一行改成另一条独立测试要求。
+  - 同步保持 Task 19 的表格条目数与 `Expected: 10 passed` 一致。
+
+## 本轮结论（2026-04-04 17:45）
+
+- 结论：**实施计划 v9 仍未达到可执行基线，继续不放行**
+- 说明：
+  - v9 已闭环 `setup_env` 单 yield、`file.content_replaced` 自动重排队、`ne_version.deleted` 单一路径、旧测试迁移单一路径等前序阻塞项。
+  - 当前剩余问题只剩 Task 19 测试矩阵自身的一处重复登记；修完后才适合放行。
