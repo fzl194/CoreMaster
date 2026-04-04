@@ -570,16 +570,20 @@ async def test_09_content_replaced_auto_remine(client):
     )
     assert len(contribs_after) == 0
 
-    # Verify a new mining job was created for this file
+    # Verify NO auto-mining job was created (design: manual re-mine only)
     job_service = _get_job_service()
     jobs = await job_service.list_jobs(job_type="mining")
-    assert len(jobs) >= 1
-    # Find the job that contains our file
     matching = [
         j for j in jobs
         if f1 in json.loads(j["params_json"]).get("file_ids", [])
     ]
-    assert len(matching) >= 1, f"No mining job found for file {f1}"
+    assert len(matching) == 0, "File content replace should NOT auto-create mining job"
+
+    # Verify file status is "changed" (mined=0 but record exists)
+    resp = await client.get(f"{_GM_BASE}/files", params={"ne_version_id": ne_id})
+    files = resp.json()
+    f1_status = next(f for f in files if f["file_entry_id"] == f1)
+    assert f1_status["mining_status"] == "changed"
 
 
 # ── Test 10: 候选状态机转换完整流程 ──

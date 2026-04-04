@@ -19,16 +19,31 @@
             <n-button type="primary" :disabled="!selectedNeVersion || selectedFiles.length === 0" @click="handleStartMining">
               开始挖掘 ({{ selectedFiles.length }})
             </n-button>
-            <n-tag v-if="currentJob" :type="jobStatusType">
-              任务 #{{ currentJob.id }}: {{ currentJob.status }}
-              ({{ currentJob.progress_current }}/{{ currentJob.progress_total }})
-            </n-tag>
           </n-space>
           <n-data-table
             :columns="fileColumns"
             :data="files"
             :row-key="(r: FileMiningInfo) => r.file_entry_id"
+            :checked-row-keys="selectedFiles"
             :loading="filesLoading"
+            @update:checked-row-keys="onCheckedFilesChange"
+          />
+        </n-space>
+      </n-tab-pane>
+
+      <n-tab-pane name="queue" tab="挖掘队列">
+        <n-space vertical>
+          <n-space>
+            <n-button @click="loadJobs">刷新</n-button>
+            <n-tag v-if="runningCount > 0" type="warning">{{ runningCount }} 个任务运行中</n-tag>
+          </n-space>
+          <n-data-table
+            :columns="jobColumns"
+            :data="jobs"
+            :row-key="(r: JobInfo) => r.id"
+            :loading="jobsLoading"
+            :pagination="{ pageSize: 20 }"
+            @update:checked-row-keys="onJobExpand"
           />
         </n-space>
       </n-tab-pane>
@@ -117,7 +132,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, h } from "vue";
+import { ref, computed, onMounted, onUnmounted, h } from "vue";
 import {
   NPageHeader, NSelect, NTabs, NTabPane, NSpace, NButton, NDataTable, NTag,
   NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NDivider, NModal,
@@ -127,7 +142,7 @@ import type { DataTableColumns } from "naive-ui";
 import {
   fetchFiles, fetchCandidates, fetchGraphEdges, acceptCandidate,
   rejectCandidate, markNonGraph, revertCandidate, startMining,
- fetchJob,
+  fetchJobs, fetchJob, cancelJob,
 } from "../../api/graph-mining";
 import type { FileMiningInfo, Candidate, GraphEdge, JobInfo } from "../../api/graph-mining";
 import { fetchNeVersions } from "../../api/mml-manager";
@@ -144,14 +159,16 @@ const candidates = ref<Candidate[]>([]);
 const candidatesLoading = ref(false);
 const edges = ref<GraphEdge[]>([]);
 const edgesLoading = ref(false);
+const jobs = ref<JobInfo[]>([]);
+const jobsLoading = ref(false);
 const candidateStatusFilter = ref<string | null>(null);
 const selectedFiles = ref<number[]>([]);
-const currentJob = ref<JobInfo | null>(null);
 const showEvidence = ref(false);
 const selectedCandidate = ref<Candidate | null>(null);
 const showMarkNonGraph = ref(false);
 const markNonGraphTarget = ref<number | null>(null);
 const nonGraphReason = ref("");
+let queueTimer: ReturnType<typeof setInterval> | null = null;
 
 // Computed
 const neVersionOptions = computed(() =>
@@ -169,18 +186,13 @@ const statusFilterOptions = [
   { label: "待人工审核", value: "ready_for_review" },
 ];
 
-const jobStatusType = computed(() => {
-  if (!currentJob.value) return "default";
-  const s = currentJob.value.status;
-  if (s === "completed") return "success";
-  if (s === "failed" || s === "cancelled") return "error";
-  if (s === "running") return "warning";
-  return "default";
-});
+const runningCount = computed(() =>
+  jobs.value.filter((j) => j.status === "running" || j.status === "queued").length
+);
 
 // File columns
 const fileColumns = computed<DataTableColumns<FileMiningInfo>>(() => [
-  { type: "selection", options: ["all", "none"] },
+  { type: "selection" },
   { title: "文件名", key: "file_name" },
   { title: "大小", key: "file_size", width: 100 },
   { title: "命令数", key: "command_count", width: 100 },
@@ -198,6 +210,42 @@ const fileColumns = computed<DataTableColumns<FileMiningInfo>>(() => [
       return h(NTag, { size: "small", type: (typeMap[row.mining_status] || "default") as any }, {
         default: () => statusMap[row.mining_status] || row.mining_status,
       });
+    },
+  },
+]);
+
+// Job columns
+const jobColumns = computed<DataTableColumns<JobInfo>>(() => [
+  { title: "任务ID", key: "id", width: 80 },
+  {
+    title: "状态", key: "status", width: 100,
+    render: (row) => {
+      const typeMap: Record<string, string> = {
+        queued: "warning", running: "info", completed: "success",
+        failed: "error", cancelled: "default",
+      };
+      const labelMap: Record<string, string> = {
+        queued: "排队中", running: "运行中", completed: "已完成",
+        failed: "失败", cancelled: "已取消",
+      };
+      return h(NTag, { size: "small", type: (typeMap[row.status] || "default") as any }, {
+        default: () => labelMap[row.status] || row.status,
+      });
+    },
+  },
+  {
+    title: "进度", key: "progress", width: 120,
+    render: (row) => `${row.progress_current} / ${row.progress_total}`,
+  },
+  { title: "创建时间", key: "created_at", width: 160 },
+  {
+    title: "操作", key: "actions", width: 120,
+    render: (row) => {
+      if (row.status !== "running" && row.status !== "queued") return null;
+      return h(NButton, {
+        size: "tiny", type: "error", quaternary: true,
+        onClick: () => handleCancelJob(row.id),
+      }, { default: () => "取消" });
     },
   },
 ]);
@@ -312,10 +360,51 @@ async function loadEdges() {
   }
 }
 
+async function loadJobs() {
+  jobsLoading.value = true;
+  try {
+    jobs.value = await fetchJobs(50);
+  } catch (e: any) {
+    message.error("加载队列失败: " + e.message);
+  } finally {
+    jobsLoading.value = false;
+  }
+}
+
+function onCheckedFilesChange(keys: number[]) {
+  selectedFiles.value = keys;
+}
+
+function onJobExpand(_keys: number[]) {
+  // no-op, kept for lint compat
+}
+
 function onTabChange() {
   if (activeTab.value === "files") loadFiles();
+  else if (activeTab.value === "queue") {
+    loadJobs();
+    startQueuePolling();
+  }
   else if (activeTab.value === "candidates") loadCandidates();
   else if (activeTab.value === "edges") loadEdges();
+
+  if (activeTab.value !== "queue") {
+    stopQueuePolling();
+  }
+}
+
+function startQueuePolling() {
+  stopQueuePolling();
+  queueTimer = setInterval(() => {
+    loadJobs();
+  }, 5000);
+}
+
+function stopQueuePolling() {
+  if (queueTimer) {
+    clearInterval(queueTimer);
+    queueTimer = null;
+  }
 }
 
 async function handleStartMining() {
@@ -323,31 +412,24 @@ async function handleStartMining() {
   try {
     const result = await startMining(selectedFiles.value);
     message.success(`挖掘任务已创建: #${result.job_id}`);
-    // Poll job status
-    pollJob(result.job_id);
+    selectedFiles.value = [];
+    // Switch to queue tab to show the new job
+    activeTab.value = "queue";
+    loadJobs();
+    startQueuePolling();
   } catch (e: any) {
     message.error("创建挖掘任务失败: " + e.message);
   }
 }
 
-async function pollJob(jobId: number) {
-  const poll = async () => {
-    try {
-      const job = await fetchJob(jobId);
-      currentJob.value = job;
-      if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
-        message.info(`任务 #${jobId} ${job.status}`);
-        loadFiles();
-        loadCandidates();
-        loadEdges();
-        return;
-      }
-      setTimeout(poll, 2000);
-    } catch {
-      // Stop polling on error
-    }
-  };
-  poll();
+async function handleCancelJob(jobId: number) {
+  try {
+    await cancelJob(jobId);
+    message.success("已取消任务");
+    loadJobs();
+  } catch (e: any) {
+    message.error("取消失败: " + e.message);
+  }
 }
 
 async function handleAccept(id: number) {
@@ -407,5 +489,9 @@ function showEvidenceDrawer(candidate: Candidate) {
 
 onMounted(() => {
   loadNeVersions();
+});
+
+onUnmounted(() => {
+  stopQueuePolling();
 });
 </script>

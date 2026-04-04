@@ -97,9 +97,24 @@ export async function startMining(
   return data;
 }
 
+export async function fetchJobs(limit?: number): Promise<JobInfo[]> {
+  const { data } = await api.get<JobInfo[]>(
+    "/plugins/graph_mining/jobs",
+    { params: limit ? { limit } : undefined }
+  );
+  return data;
+}
+
 export async function fetchJob(jobId: number): Promise<JobInfo> {
   const { data } = await api.get<JobInfo>(
     `/plugins/graph_mining/jobs/${jobId}`
+  );
+  return data;
+}
+
+export async function cancelJob(jobId: number): Promise<{ ok: boolean }> {
+  const { data } = await api.post(
+    `/plugins/graph_mining/jobs/${jobId}/cancel`
   );
   return data;
 }
