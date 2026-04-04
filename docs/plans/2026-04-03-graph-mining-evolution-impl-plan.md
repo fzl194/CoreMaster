@@ -13,6 +13,7 @@
 > **修订说明:**
 > - v1：初始版本（2026-04-04）
 > - v2：根据 Codex 审查修订 3 项问题（Task 3 `_json.dumps` 修正、Task 5 `JobWorker` 注册到 registry、Task 10a 新增 `CandidateService` 统一 owner）
+> - v3：根据 Codex 第二轮审查修订 3 项问题（Task 11 重算链路补 total_mined + 清理残留代码、Task 3 补 `import json`、依赖图+总计同步 v2 结构）
 
 ---
 
@@ -407,6 +408,7 @@ Expected: FAIL
 ```python
 # backend/core/jobs/worker.py
 import asyncio
+import json
 import logging
 from typing import Callable, Awaitable
 
@@ -1257,6 +1259,7 @@ await self.event_bus.emit("file.deleted", {
 ```python
 async def _on_file_deleted(self, payload):
     file_id = payload["file_entry_id"]
+    ne_version_id = payload.get("ne_version_id")
     # 删除该文件的 contribution
     affected = await self.db.query(
         "SELECT candidate_id FROM candidate_contribution WHERE file_entry_id=?",
@@ -1265,10 +1268,9 @@ async def _on_file_deleted(self, payload):
     await self.db.execute("DELETE FROM candidate_contribution WHERE file_entry_id=?", (file_id,))
     await self.db.execute("DELETE FROM file_mining_record WHERE file_entry_id=?", (file_id,))
     # 通过共享服务重算受影响候选（同 MiningWorker 使用的同一个实例）
+    total_mined = await self.candidate_service.get_total_mined(ne_version_id)
     for row in affected:
-        await self.candidate_service.recalculate(row["candidate_id"], "v1")
-
-            total_mined = await self.candidate_service.get_total_mined(payload.get("ne_version_id"))
+        await self.candidate_service.recalculate(row["candidate_id"], "v1", total_mined)
 ```
 
 > **职责明确**: `_recalculate_candidate` 不再分散在 MiningWorker 和 Plugin 上，而是统一归属到 `CandidateService`，单实例。Task 10 的 MiningWorker 和 Task 11 的事件 handler 都通过 `self.candidate_service` 趈费。
@@ -1700,26 +1702,26 @@ Task 4 (events) ─────────────────────�
                                               ↓
                                   Task 6 (插件骨架) ──→ Task 7 (迁移 scorer) ──→ Task 8 (pipeline)
                                                                               ↓
-                                                                    Task 9 (API 路由) ──→ Task 10 (worker)
-                                                                                              ↓
-                                                                                    Task 11 (事件集成)
-                                                                                    Task 12 (瘦身 mml_manager)
-                                                                                    Task 13 (移除虚拟插件)
-                                                                                              ↓
-                                                                                    Task 14 (前端 API)
-                                                                                    Task 15 (前端骨架)
-                                                                                    Task 16 (挖掘 Tab)
-                                                                                    Task 17 (审核 Tab)
-                                                                                    Task 18 (清理旧页面)
-                                                                                              ↓
-                                                                                    Task 19 (集成测试)
-                                                                                    Task 20 (回归验证)
+                                                                    Task 9 (API 路由) ──→ Task 10a (CandidateService) ──→ Task 10b (MiningWorker)
+                                                                                                                                ↓
+                                                                                                                    Task 11 (事件集成，复用 CandidateService)
+                                                                                                                    Task 12 (瘦身 mml_manager)
+                                                                                                                    Task 13 (移除虚拟插件)
+                                                                                                                              ↓
+                                                                                                                    Task 14 (前端 API)
+                                                                                                                    Task 15 (前端骨架)
+                                                                                                                    Task 16 (挖掘 Tab)
+                                                                                                                    Task 17 (审核 Tab)
+                                                                                                                    Task 18 (清理旧页面)
+                                                                                                                              ↓
+                                                                                                                    Task 19 (集成测试)
+                                                                                                                    Task 20 (回归验证)
 ```
 
 ## 总计
 
-- **后端新建文件**: ~12 个
+- **后端新建文件**: ~14 个（含 services/candidate_service.py）
 - **前端新建/修改文件**: ~4 个
 - **测试文件**: ~4 个（新增）
-- **预估 Tasks**: 20 个
-- **风险点**: Task 10 (worker 终态保护逻辑最复杂)、Task 11 (跨插件事件时序)、Task 12 (删除代码时不能误删非挖掘代码)
+- **预估 Tasks**: 20 个（Task 10 拆为 10a+10b，内部编号不变）
+- **风险点**: Task 10a/10b (CandidateService 终态保护逻辑最复杂)、Task 11 (跨插件事件时序，依赖 CandidateService 单实例)、Task 12 (删除代码时不能误删非挖掘代码)
