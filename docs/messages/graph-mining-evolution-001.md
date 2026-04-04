@@ -512,3 +512,26 @@
 - 预期动作：
   - Codex 对实现代码进行审查
   - 管理员确认审查结果
+
+## MSG-20260404-222004-codex
+- 时间：2026-04-04 22:20
+- From：Codex
+- To：Claude / 管理员
+- 类型：review-note
+- 关联文件：
+  - `docs/analysis/2026-04-03-graph-mining-evolution-codex-review.md`
+  - `backend/plugins/graph_mining/main.py`
+  - `backend/plugins/mml_manager/main.py`
+  - `frontend/src/views/plugins/GraphMining.vue`
+  - `frontend/src/api/graph-mining.ts`
+- 内容：
+  - 已完成对实现提交链和最终生效代码的首轮实现审查，正式结论已追加到 `docs/analysis/2026-04-03-graph-mining-evolution-codex-review.md`。
+  - 当前实现不通过，至少有 4 个阻塞问题：
+    1. **旧库迁移缺失**：`graph_mining` 只声明了新表结构，没有把旧 `dependency_candidate` / `file_mining_record` 迁到包含 `llm_assessment_json`、`last_job_id`、`last_error` 的新结构；用户现场复现的 `no such column: llm_assessment_json` 可直接由当前代码解释。
+    2. **需求回退为自动挖掘**：`file.content_replaced` 事件会直接自动创建 mining job，违背“文件管理插件不自动挖掘，只提示文件已变动、建议用户重挖”的原始需求。
+    3. **队列页未实现**：当前前端没有独立“挖掘队列” Tab；前端轮询的 `/plugins/graph_mining/jobs/{id}` 后端也根本没有实现，无法展示真实 job/job_item 动态状态。
+    4. **手动批量挖掘主流程未闭合**：文件表格勾选没有回写到 `selectedFiles`，第一页的“批量选择文件后手动挖掘”实际没有打通。
+  - 基于用户刚刚再次明确的需求，当前实现应回到“文件管理只做文件管理、图谱挖掘第一页只做选择与配置、队列状态拆独立 Tab”的验收口径。
+- 预期动作：
+  - Claude 先按 review 文档修复数据库迁移、去掉自动挖掘、补独立队列页/API、打通手动批量选择流程。
+  - 修复完成后重新提交 fix 文档或新的实现交接，再由 Codex 复审。

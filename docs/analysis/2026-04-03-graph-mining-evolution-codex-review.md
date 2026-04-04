@@ -563,3 +563,121 @@
 - 说明：
   - 截至当前正文版本，前序所有阻塞项均已闭环，本轮未发现新的剩余问题。
   - 可以进入后续执行阶段；下一轮重点应转向真实实现代码、迁移落地和测试执行结果，而不是继续修改计划文档。
+
+---
+
+## 实现代码审查结果（2026-04-04 22:20）
+
+本轮按“Claude 16 个实现提交链 → 最终生效代码 → 用户现场症状 → 原始需求”做实现审查。重点不再是计划文本，而是当前代码是否满足以下原始要求：
+
+1. 文件管理插件只负责文件管理，不自动挖掘；文件更新后应在图谱挖掘中标记“已变动/建议重挖”。
+2. 图谱挖掘插件第一屏应按网元展示文件，并支持批量选择文件后手动发起挖掘。
+3. 文件挖掘队列应是独立 Tab，动态展示运行中/已完成文件状态；与“选择待挖掘文件”的第一页分离。
+
+### 1. 旧库迁移链路缺失，现有数据库会在候选管理页直接报错 `no such column: llm_assessment_json`
+
+- 严重性：高
+- 对应症状：
+  - 用户已复现：前端点击“候选管理”报 `network error`，后端报 `sqlite3.OperationalError: no such column: llm_assessment_json`。
+- 依据：
+  - [`backend/plugins/graph_mining/main.py`](D:/mywork/CoreMaster/backend/plugins/graph_mining/main.py#L49) 只用 `CREATE TABLE IF NOT EXISTS` 定义了新表结构，其中新增了 `llm_assessment_json`、`last_job_id`、`last_error`。
+  - 但当前代码没有任何针对旧表的 `ALTER TABLE` 迁移；旧结构仍来自 [`backend/plugins/mml_manager/main.py`](D:/mywork/CoreMaster/backend/plugins/mml_manager/main.py#L84)，它只补了 `review_route`、`non_graph_reason`、`non_graph_reviewer`、`active_algorithm_version`，没有补 `llm_assessment_json`、`last_job_id`、`last_error`。
+  - 候选列表接口又在 [`backend/plugins/graph_mining/main.py`](D:/mywork/CoreMaster/backend/plugins/graph_mining/main.py#L261) 直接查询 `llm_assessment_json`。
+- 影响：
+  - 这会让“已有 MVP 数据库升级到新实现”这一主路径直接失败；候选管理页无法打开。
+  - Claude 的测试都基于新建库，没覆盖真实升级场景，因此 113 个测试通过不能证明线上库可用。
+- 建议修复：
+  - 在插件注册或正式迁移脚本中补齐旧表增量迁移，至少包括 `dependency_candidate.llm_assessment_json` 与 `file_mining_record.last_job_id/last_error`。
+  - 增加“从旧 MVP 库启动新版本”的升级测试。
+
+### 2. 文件更新后被直接自动重挖，违背“文件管理不自动挖掘，只提示建议重挖”的原始需求
+
+- 严重性：高
+- 对应症状：
+  - 用户反馈“我都没挖掘，结果显示文件已经挖掘了”“文件一上传/更新后数据库里已经有边了”。
+- 依据：
+  - 文件管理插件在 [`backend/plugins/mml_manager/main.py`](D:/mywork/CoreMaster/backend/plugins/mml_manager/main.py#L625) 的内容更新接口里，写完文件后立即发出 `file.content_replaced` 事件。
+  - 图谱挖掘插件在 [`backend/plugins/graph_mining/main.py`](D:/mywork/CoreMaster/backend/plugins/graph_mining/main.py#L562) 处理该事件时，会先清旧贡献，再直接 `create_job("mining", ...)` 自动入队。
+  - 当前文件状态模型 [`backend/plugins/graph_mining/main.py`](D:/mywork/CoreMaster/backend/plugins/graph_mining/main.py#L188) 只有 `unmined/queued/running/completed/failed`，并没有“文件已变动/建议重新挖掘”的展示语义。
+- 影响：
+  - 文件管理插件已经越权承担图谱挖掘触发职责，和“文件管理只做文件管理”的要求相反。
+  - 用户无法先看到“该文件已变动，建议重挖”，而是系统擅自创建挖掘任务并可能产出新边。
+- 建议修复：
+  - 去掉 `file.content_replaced -> 自动 create_job` 这条链路。
+  - 改为记录文件“已变动/待重挖”状态，并只在图谱挖掘页提醒用户手动选择后批量重挖。
+
+### 3. 队列需求没有真正实现：当前没有独立队列 Tab，也没有可用的 jobs API 支撑动态状态页
+
+- 严重性：高
+- 对应需求：
+  - 用户明确要求“文件挖掘应该有一个队列，这是单独的一个 tab 页，这个页需要展示正在运行或者已经完成挖掘的文件状态，会动态更新”。
+- 依据：
+  - 当前前端只有 [`frontend/src/views/plugins/GraphMining.vue`](D:/mywork/CoreMaster/frontend/src/views/plugins/GraphMining.vue#L15) 的 3 个 Tab：`文件管理 / 候选管理 / 图谱边`，没有独立“挖掘队列”页。
+  - 前端虽然声明了 `fetchJob()`，但它请求的是 [`frontend/src/api/graph-mining.ts`](D:/mywork/CoreMaster/frontend/src/api/graph-mining.ts#L100) `/plugins/graph_mining/jobs/{id}`。
+  - 后端 [`backend/plugins/graph_mining/main.py`](D:/mywork/CoreMaster/backend/plugins/graph_mining/main.py) 并没有实现任何 `jobs` 路由，因此轮询在第一次请求就会失败。
+- 影响：
+  - 当前实现只能“尝试创建任务”，却不能展示真实队列，更不能展示多个文件/多个任务的动态状态。
+  - 这和“前端不卡住，但能看到独立队列状态页”的目标不一致。
+- 建议修复：
+  - 补齐独立队列 Tab。
+  - 补齐 `jobs` 列表/详情 API，以及按文件粒度返回 `job_item` 动态状态的接口契约。
+  - 将“文件选择页”和“队列状态页”彻底拆开，而不是只在第一页顶部挂一个当前任务标签。
+
+### 4. 图谱挖掘第一页连“手动批量选择文件后挖掘”都没有真正打通
+
+- 严重性：高
+- 对应需求：
+  - 用户要求图谱挖掘第一页按网元展示文件，并支持批量选择对应文件进行挖掘。
+- 依据：
+  - 前端按钮状态依赖 [`frontend/src/views/plugins/GraphMining.vue`](D:/mywork/CoreMaster/frontend/src/views/plugins/GraphMining.vue#L19) 的 `selectedFiles.length`。
+  - 但当前表格只声明了选择列 [`frontend/src/views/plugins/GraphMining.vue`](D:/mywork/CoreMaster/frontend/src/views/plugins/GraphMining.vue#L27)，没有 `checked-row-keys` / `on-update:checked-row-keys` 之类的绑定把勾选结果写回 [`frontend/src/views/plugins/GraphMining.vue`](D:/mywork/CoreMaster/frontend/src/views/plugins/GraphMining.vue#L147) 的 `selectedFiles`。
+  - `handleStartMining()` 又只读取这个从未更新的状态 [`frontend/src/views/plugins/GraphMining.vue`](D:/mywork/CoreMaster/frontend/src/views/plugins/GraphMining.vue#L320)。
+- 影响：
+  - 用户即使在表格里勾选文件，前端也拿不到所选文件 ID，批量启动挖掘的主流程实际上没有闭合。
+  - 这与“用户手动批量选择文件进行挖掘”的核心需求直接冲突。
+- 建议修复：
+  - 把表格勾选结果显式绑定到 `selectedFiles`。
+  - 增加至少一个前端测试或端到端冒烟，验证“勾选两文件 -> 点击开始挖掘 -> 请求体包含两个 file_ids”。
+
+## 测试缺口（实现阶段）
+
+- 当前后端集成测试基于全新测试库，未覆盖旧库升级，因此没发现 `llm_assessment_json` 缺列问题。
+- 当前验证没有任何前端交互级测试，没覆盖：
+  - 文件勾选是否真的写回 `selectedFiles`
+  - 队列页是否存在
+  - `/plugins/graph_mining/jobs/{id}` 是否真实可用
+- 现有实现还把“文件更新后自动重挖”写成了集成测试期望，说明测试基线本身已偏离原始需求。
+
+## 回归风险（实现阶段）
+
+- 只要用户使用旧数据库，候选管理页就会稳定报错。
+- 任何文件内容更新入口都会把系统推向“自动挖掘”，继续制造与业务预期不一致的边数据。
+- 即使后端 job 框架存在，前端因为缺少独立队列 API/页面，仍无法形成可观测的异步作业体验。
+
+## 建议修复项（实现阶段）
+
+1. 先补数据库迁移，确保旧库可升级后再继续联调候选管理。
+2. 回退 `file.content_replaced` 的自动挖掘行为，改成“标记文件已变动，提示用户手动重挖”。
+3. 重做图谱挖掘前端结构：
+   - Tab 1：按网元看文件并批量选择挖掘
+   - Tab 2：挖掘队列/文件状态动态展示
+   - 其他 Tab：候选管理、图谱边
+4. 补齐 jobs 队列 API 与前端绑定，覆盖 job 与 job_item 两层状态。
+5. 为“批量选择启动挖掘”和“旧库升级后候选页可打开”补最小回归测试。
+
+## 无法确认的残余风险
+
+- 用户反馈“上传后立即出现已挖掘/有边”，当前静态代码能明确确认“文件内容更新一定会自动重挖”，但是否还有上传链路上的额外隐式调用，还需要联调现场再追一次上传后的前端请求序列。
+- `MiningWorker` 的并发安全和大文件性能本轮未做压力级验证。
+
+## 管理员介入影响
+
+- 先前管理员放行的是“实施计划 v10 可执行”，不是“当前实现已满足原始需求”。
+- 本轮问题属于实现阶段的真实偏差，尤其是需求回退和旧库迁移缺失，不能以“计划已放行”覆盖。
+
+## 本轮结论（2026-04-04 22:20）
+
+- 结论：**实现代码当前不通过，需 Claude 修复后再复审**
+- 关键原因：
+  - 现有代码与用户刚刚再次明确的 3 条原始需求存在直接冲突。
+  - 用户现场复现的 `llm_assessment_json` 缺列报错已能从代码静态确认根因。
