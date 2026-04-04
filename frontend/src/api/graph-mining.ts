@@ -67,7 +67,17 @@ export interface FileMiningInfo {
   algorithm_version: string;
   command_count: number;
   mined_at: string | null;
-  mining_status: "unmined" | "queued" | "running" | "completed" | "failed";
+  mining_status: "unmined" | "changed" | "queued" | "running" | "completed" | "failed";
+}
+
+export interface JobItemInfo {
+  id: number;
+  job_id: number;
+  item_key: string;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error_message: string | null;
 }
 
 export interface GraphEdge {
@@ -104,7 +114,41 @@ export async function fetchJob(jobId: number): Promise<JobInfo> {
   return data;
 }
 
-export async function fetchFiles(
+export async function fetchJobs(
+  neVersionId: number
+): Promise<FileMiningInfo[]> {
+  const { data } = await api.get<FileMiningInfo[]>(
+    "/plugins/graph_mining/files",
+    { params: { ne_version_id: neVersionId } }
+  );
+  return data;
+}
+
+export async function fetchJobs(
+  jobType: str | None = None,
+  status: str | None = None,
+  limit: int = 20,
+): Promise<JobInfo[]> {
+  const { data } = await api.get<JobInfo[]>(
+    "/plugins/graph_mining/jobs",
+    { params }
+  );
+  return data;
+}
+
+export async function fetchJobItems(jobId: number): Promise<JobItemInfo[]> {
+  const { data } = await api.get<JobItemInfo[]>(
+    `/plugins/graph_mining/jobs/${jobId}/items`
+  );
+  return data;
+}
+
+export async function cancelJob(jobId: number): Promise<{ ok: boolean }> {
+  const { data } = await api.post(
+    `/plugins/graph_mining/jobs/${jobId}/cancel`
+  );
+  return data;
+}
   neVersionId: number
 ): Promise<FileMiningInfo[]> {
   const { data } = await api.get<FileMiningInfo[]>(

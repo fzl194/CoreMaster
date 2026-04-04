@@ -144,6 +144,17 @@ class Plugin:
         await self.db.execute("CREATE INDEX IF NOT EXISTS idx_dc_ne_version ON dependency_candidate(ne_version_id);")
         await self.db.execute("CREATE INDEX IF NOT EXISTS idx_cc_candidate ON candidate_contribution(candidate_id);")
 
+        # Migrate old tables: add columns introduced by graph_mining that old DB won't have
+        for _col_sql in [
+            "ALTER TABLE dependency_candidate ADD COLUMN llm_assessment_json TEXT",
+            "ALTER TABLE file_mining_record ADD COLUMN last_job_id INTEGER",
+            "ALTER TABLE file_mining_record ADD COLUMN last_error TEXT",
+        ]:
+            try:
+                await self.db.execute(_col_sql)
+            except Exception:
+                pass  # Column already exists
+
     def _register_routes(self):
         from plugins.graph_mining.services.candidate_service import _determine_review_route
 
@@ -184,6 +195,30 @@ class Plugin:
                 item_keys,
             )
             return {"job_id": job_id}
+
+        @self.router.get("/jobs")
+        async def list_jobs(limit: int = Query(20)):
+            """List recent mining jobs."""
+            jobs = await self.job_service.list_jobs(job_type="mining", limit=limit)
+            return jobs
+
+        @self.router.get("/jobs/{job_id}")
+        async def get_job(job_id: int):
+            """Get job detail with items."""
+            job = await self.job_service.get_job(job_id)
+            if not job:
+                return JSONResponse(status_code=404, content={"detail": "任务不存在"})
+            items = await self.job_service.get_job_items(job_id)
+            job["items"] = items
+            return job
+
+        @self.router.post("/jobs/{job_id}/cancel")
+        async def cancel_job(job_id: int):
+            """Cancel a running/queued mining job."""
+            ok = await self.job_service.cancel_job(job_id)
+            if not ok:
+                return JSONResponse(status_code=400, content={"detail": "无法取消该任务"})
+            return {"ok": True}
 
         @self.router.get("/files")
         async def get_files(ne_version_id: int = Query(...)):
@@ -231,6 +266,9 @@ class Plugin:
                             row["mining_status"] = "failed"
                         else:
                             row["mining_status"] = "completed"
+                    elif row.get("mined") == 0 and row.get("mined_at") is not None:
+                        # Has a mining record with mined=0 → content was replaced
+                        row["mining_status"] = "changed"
                     else:
                         row["mining_status"] = "unmined"
             else:
@@ -560,15 +598,30 @@ class Plugin:
             await self.candidate_service.recalculate(row["candidate_id"], "v1", total_mined)
 
     async def _on_file_content_replaced(self, payload):
-        # Clean old contributions, then auto-re-queue mining
-        await self._on_file_deleted(payload)
+        # Clean old contributions, mark file as unmined (not auto-mine)
         file_id = payload["file_entry_id"]
         ne_version_id = payload.get("ne_version_id")
-        await self.job_service.create_job(
-            "mining",
-            {"file_ids": [file_id], "ne_version_id": ne_version_id},
-            [str(file_id)],
+        # Delete contributions for this file
+        affected = await self.db.query(
+            "SELECT candidate_id FROM candidate_contribution WHERE file_entry_id=?",
+            (file_id,),
         )
+        await self.db.execute(
+            "DELETE FROM candidate_contribution WHERE file_entry_id=?", (file_id,)
+        )
+        # Reset file_mining_record to unmined (keep record so status shows "changed")
+        existing = await self.db.query(
+            "SELECT id FROM file_mining_record WHERE file_entry_id=?", (file_id,)
+        )
+        if existing:
+            await self.db.execute(
+                "UPDATE file_mining_record SET mined=0, last_error=NULL WHERE file_entry_id=?",
+                (file_id,),
+            )
+        # Recalculate affected candidates via shared service
+        total_mined = await self.candidate_service.get_total_mined(ne_version_id)
+        for row in affected:
+            await self.candidate_service.recalculate(row["candidate_id"], "v1", total_mined)
 
     async def _on_ne_version_deleted(self, payload):
         ne_version_id = payload["ne_version_id"]
