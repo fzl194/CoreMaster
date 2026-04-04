@@ -43,7 +43,6 @@
             :row-key="(r: JobInfo) => r.id"
             :loading="jobsLoading"
             :pagination="{ pageSize: 20 }"
-            @update:checked-row-keys="onJobExpand"
           />
         </n-space>
       </n-tab-pane>
@@ -144,7 +143,7 @@ import {
   rejectCandidate, markNonGraph, revertCandidate, startMining,
   fetchJobs, fetchJob, cancelJob,
 } from "../../api/graph-mining";
-import type { FileMiningInfo, Candidate, GraphEdge, JobInfo } from "../../api/graph-mining";
+import type { FileMiningInfo, Candidate, GraphEdge, JobInfo, JobItemInfo } from "../../api/graph-mining";
 import { fetchNeVersions } from "../../api/mml-manager";
 
 const message = useMessage();
@@ -214,8 +213,9 @@ const fileColumns = computed<DataTableColumns<FileMiningInfo>>(() => [
   },
 ]);
 
-// Job columns
+// Job columns — expandable to show per-file items
 const jobColumns = computed<DataTableColumns<JobInfo>>(() => [
+  { type: "expand", renderExpand: renderJobItems },
   { title: "任务ID", key: "id", width: 80 },
   {
     title: "状态", key: "status", width: 100,
@@ -237,9 +237,14 @@ const jobColumns = computed<DataTableColumns<JobInfo>>(() => [
     title: "进度", key: "progress", width: 120,
     render: (row) => `${row.progress_current} / ${row.progress_total}`,
   },
-  { title: "创建时间", key: "created_at", width: 160 },
   {
-    title: "操作", key: "actions", width: 120,
+    title: "文件数", key: "file_count", width: 80,
+    render: (row) => row.items?.length ?? row.progress_total,
+  },
+  { title: "创建时间", key: "created_at", width: 180 },
+  { title: "完成时间", key: "finished_at", width: 180 },
+  {
+    title: "操作", key: "actions", width: 100,
     render: (row) => {
       if (row.status !== "running" && row.status !== "queued") return null;
       return h(NButton, {
@@ -249,6 +254,36 @@ const jobColumns = computed<DataTableColumns<JobInfo>>(() => [
     },
   },
 ]);
+
+function renderJobItems(row: JobInfo) {
+  const items = row.items ?? [];
+  if (items.length === 0) return h("span", { style: "color: #999" }, "暂无文件详情");
+  const columns: DataTableColumns<JobItemInfo> = [
+    { title: "文件名", key: "file_name", width: 200 },
+    {
+      title: "状态", key: "status", width: 100,
+      render: (item: JobItemInfo) => {
+        const typeMap: Record<string, string> = {
+          pending: "default", running: "info", completed: "success",
+          failed: "error", skipped: "default",
+        };
+        const labelMap: Record<string, string> = {
+          pending: "等待中", running: "挖掘中", completed: "已完成",
+          failed: "失败", skipped: "跳过",
+        };
+        return h(NTag, { size: "small", type: (typeMap[item.status] || "default") as any }, {
+          default: () => labelMap[item.status] || item.status,
+        });
+      },
+    },
+    { title: "开始时间", key: "started_at", width: 180 },
+    { title: "完成时间", key: "finished_at", width: 180 },
+  ];
+  return h(NDataTable, {
+    columns, data: items, rowKey: (r: JobItemInfo) => r.id,
+    size: "small", bordered: false,
+  });
+}
 
 // Candidate columns
 const candidateColumns = computed<DataTableColumns<Candidate>>(() => [
@@ -373,10 +408,6 @@ async function loadJobs() {
 
 function onCheckedFilesChange(keys: number[]) {
   selectedFiles.value = keys;
-}
-
-function onJobExpand(_keys: number[]) {
-  // no-op, kept for lint compat
 }
 
 function onTabChange() {

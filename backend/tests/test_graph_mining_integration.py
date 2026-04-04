@@ -564,11 +564,18 @@ async def test_09_content_replaced_auto_remine(client):
     })
     assert resp.status_code == 200
 
-    # Verify old contributions were cleaned (via _on_file_deleted → _on_file_content_replaced)
+    # Verify contributions are PRESERVED (not deleted on content replace)
     contribs_after = await db.query(
         "SELECT * FROM candidate_contribution WHERE file_entry_id=?", (f1,)
     )
-    assert len(contribs_after) == 0
+    assert len(contribs_after) == 1, "Contributions should be preserved until user re-mines"
+
+    # Verify candidate data is untouched
+    cand_rows = await db.query(
+        "SELECT status, confidence FROM dependency_candidate WHERE id=?", (cand_id,)
+    )
+    assert len(cand_rows) == 1
+    assert cand_rows[0]["status"] == "pending"
 
     # Verify NO auto-mining job was created (design: manual re-mine only)
     job_service = _get_job_service()

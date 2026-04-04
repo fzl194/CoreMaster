@@ -198,8 +198,21 @@ class Plugin:
 
         @self.router.get("/jobs")
         async def list_jobs(limit: int = Query(20)):
-            """List recent mining jobs."""
+            """List recent mining jobs with file names."""
             jobs = await self.job_service.list_jobs(job_type="mining", limit=limit)
+            for job in jobs:
+                items = await self.job_service.get_job_items(job["id"])
+                # Enrich each item with file name
+                for item in items:
+                    try:
+                        fid = int(item["item_key"])
+                    except (ValueError, TypeError):
+                        continue
+                    frows = await self.db.query(
+                        "SELECT name FROM file_entry WHERE id=?", (fid,)
+                    )
+                    item["file_name"] = frows[0]["name"] if frows else "未知"
+                job["items"] = items
             return jobs
 
         @self.router.get("/jobs/{job_id}")
@@ -256,6 +269,9 @@ class Plugin:
                     fid = str(row["file_entry_id"])
                     if row.get("mined"):
                         row["mining_status"] = "completed"
+                    elif row.get("mined") == 0 and row.get("mined_at") is not None:
+                        # Has a mining record with mined=0 → content was replaced
+                        row["mining_status"] = "changed"
                     elif fid in status_map:
                         ji_status = status_map[fid]
                         if ji_status == "running":
@@ -266,9 +282,6 @@ class Plugin:
                             row["mining_status"] = "failed"
                         else:
                             row["mining_status"] = "completed"
-                    elif row.get("mined") == 0 and row.get("mined_at") is not None:
-                        # Has a mining record with mined=0 → content was replaced
-                        row["mining_status"] = "changed"
                     else:
                         row["mining_status"] = "unmined"
             else:
@@ -598,18 +611,9 @@ class Plugin:
             await self.candidate_service.recalculate(row["candidate_id"], "v1", total_mined)
 
     async def _on_file_content_replaced(self, payload):
-        # Clean old contributions, mark file as unmined (not auto-mine)
+        # Only mark file as "changed" — do NOT delete contributions or recalculate.
+        # Old contributions stay until the user explicitly re-mines the file.
         file_id = payload["file_entry_id"]
-        ne_version_id = payload.get("ne_version_id")
-        # Delete contributions for this file
-        affected = await self.db.query(
-            "SELECT candidate_id FROM candidate_contribution WHERE file_entry_id=?",
-            (file_id,),
-        )
-        await self.db.execute(
-            "DELETE FROM candidate_contribution WHERE file_entry_id=?", (file_id,)
-        )
-        # Reset file_mining_record to unmined (keep record so status shows "changed")
         existing = await self.db.query(
             "SELECT id FROM file_mining_record WHERE file_entry_id=?", (file_id,)
         )
@@ -618,10 +622,6 @@ class Plugin:
                 "UPDATE file_mining_record SET mined=0, last_error=NULL WHERE file_entry_id=?",
                 (file_id,),
             )
-        # Recalculate affected candidates via shared service
-        total_mined = await self.candidate_service.get_total_mined(ne_version_id)
-        for row in affected:
-            await self.candidate_service.recalculate(row["candidate_id"], "v1", total_mined)
 
     async def _on_ne_version_deleted(self, payload):
         ne_version_id = payload["ne_version_id"]

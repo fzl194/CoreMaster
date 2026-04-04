@@ -2,6 +2,16 @@ import api from "./index";
 
 // ── Interfaces ──────────────────────────────────────────────────────────────
 
+export interface JobItemInfo {
+  id: number;
+  job_id: number;
+  item_key: string;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  file_name: string;
+}
+
 export interface JobInfo {
   id: number;
   type: string;
@@ -14,6 +24,7 @@ export interface JobInfo {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  items?: JobItemInfo[];
 }
 
 export interface CandidateScores {
