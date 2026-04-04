@@ -248,3 +248,53 @@
 
 - 结论：**实施计划 v3 仍未达到可执行基线，继续不放行**
 - 原因：Claude 修掉了上一轮指出的字面问题，但 Task 11 的订阅动作和 handler 签名仍然没有闭合；这会让跨插件生命周期清理在真正执行时继续失效。
+
+## 实施计划四次复审结果（2026-04-04 14:35）
+
+### 1. Task 5 的 lifespan 验证示例仍然对不上当前代码骨架，按正文执行会直接失败，也无法证明启动链路真的跑通
+
+- 严重性：高
+- 依据：
+  - v4 把验证步骤改成了 `backend/tests/test_lifespan.py`，但示例正文仍写成 `from core.plugin.registry import ServiceRegistry` 和 `ServiceRegistry.instance()`（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 667-673 行）。
+  - 当前仓库里实际存在的是 [`backend/core/services/registry.py`](D:/mywork/CoreMaster/backend/core/services/registry.py)，只有普通 `ServiceRegistry` 类，没有 `core.plugin.registry` 模块，也没有 `instance()` 单例接口。
+  - 现有集成测试触发生命周期的标准写法也是 `async with app.router.lifespan_context(app): ...`，而不是单独 `AsyncClient(transport=ASGITransport(app=app))` 后 `pass`（[`backend/tests/test_integration.py`](D:/mywork/CoreMaster/backend/tests/test_integration.py) 第 8-13 行）。
+- 风险：
+  - 按计划正文落地，测试会先因为错误 import / 错误 API 直接失败，根本到不了验证 `JobService`、`JobWorker`、`PluginEventBus` 装配的阶段。
+  - 这意味着 Claude 声称已补强的“lifespan 启动验证”仍然没有真正锚定到当前代码库的启动方式，无法证明最关键的接线链路已受保护。
+- 建议修复：
+  - 把示例改成与现有仓库一致的写法：显式进入 `app.router.lifespan_context(app)`，然后从 `app.state.registry` 取 registry 并断言服务存在。
+  - 删除 `core.plugin.registry` / `ServiceRegistry.instance()` 这类当前仓库不存在的接口引用。
+
+### 2. Task 2 的 `JobService.create_job()` 仍然依赖当前 `DatabaseService` 不提供的返回值，核心基础设施任务一开始就会跑偏
+
+- 严重性：高
+- 依据：
+  - 计划正文里 `JobService.create_job()` 仍写成 `cursor = await self.db.execute(...)` 后再取 `cursor.lastrowid`（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 247-251 行）。
+  - 但当前 [`backend/core/services/database.py`](D:/mywork/CoreMaster/backend/core/services/database.py) 的 `DatabaseService.execute()` 明确只 `execute + commit`，返回值是 `None`，并不会把 cursor 暴露给调用方。
+- 风险：
+  - Claude 若按该计划直接实现，Task 2 会在最基础的 `create_job()` 路径上触发 `AttributeError: 'NoneType' object has no attribute 'lastrowid'`。
+  - 这不是实现时可自由发挥的小细节，而是计划示例与现有公共服务接口直接冲突，会把后续 Task 3/5/9 全部建立在错误基线上。
+- 建议修复：
+  - 在计划里先明确二选一：
+    1. 扩展 `DatabaseService`，新增返回 cursor / lastrowid 的接口；
+    2. 或保持 `DatabaseService` 不变，改用额外查询（例如 `SELECT last_insert_rowid()`）或其他明确方式拿 `job_id`。
+  - 在未补齐这一前提前，不建议进入执行。
+
+### 3. Task 9 对 worker 归属的引用仍未完全同步，执行时会继续制造错位上下文
+
+- 严重性：中
+- 依据：
+  - 当前 Task 9 仍写“实际挖掘由 mining_worker 异步执行（Task 11）”（`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md` 第 1072 行）。
+  - 但 v2 之后的正文已经把共享领域服务拆到 Task 10a，把 `MiningWorker` 明确拆到 Task 10b；Task 11 负责的是跨插件事件集成，不是 worker 实现本身。
+- 风险：
+  - 这会让执行者在阅读 Task 9 时继续跳去 Task 11 找 worker 语义，重复制造我们前几轮一直在收敛的 Task 10/11 职责混淆。
+- 建议修复：
+  - 把 Task 9 里的引用同步为 Task 10b，并顺手全局扫一遍 Task 编号引用，保证正文、依赖图、消息结论一致。
+
+## 本轮结论（2026-04-04 14:35）
+
+- 结论：**实施计划 v4 仍未达到可执行基线，继续不放行**
+- 原因：
+  - Task 5 的“启动验证”虽然改了方向，但正文示例仍引用当前仓库不存在的 registry 接口，也没有按现有测试基线正确进入 lifespan。
+  - Task 2 的 `create_job()` 仍依赖当前 `DatabaseService` 不提供的 `lastrowid` 返回值，核心任务链路从一开始就不成立。
+  - Task 9 的任务引用同步仍未完全收口，执行上下文继续存在错位风险。
