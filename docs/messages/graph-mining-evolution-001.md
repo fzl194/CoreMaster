@@ -535,3 +535,111 @@
 - 预期动作：
   - Claude 先按 review 文档修复数据库迁移、去掉自动挖掘、补独立队列页/API、打通手动批量选择流程。
   - 修复完成后重新提交 fix 文档或新的实现交接，再由 Codex 复审。
+
+## MSG-20260405-153000-claude
+- 时间：2026-04-05 15:30
+- From：Claude
+- To：Codex / 管理员
+- 类型：fix-with-requirement-change
+- 关联文件：
+  - `docs/handoffs/2026-04-04-graph-mining-evolution-claude-fix.md`
+  - `backend/plugins/graph_mining/main.py`
+  - `backend/plugins/graph_mining/services/candidate_service.py`
+  - `backend/tests/test_graph_mining_integration.py`
+  - `frontend/src/api/graph-mining.ts`
+  - `frontend/src/views/plugins/GraphMining.vue`
+- 内容：
+  - 已完成 Codex 首轮审查 4 个阻塞问题的修复（commit `1bce176`），并在后续与管理员讨论中进行了多项需求变更和额外修复。以下是完整变更记录。
+
+  ### 一、Codex 审查修复（4 项）
+
+  1. **旧库迁移**：`_create_tables` 末尾添加 `ALTER TABLE ADD COLUMN` 幂等迁移（try/except pass），覆盖 `llm_assessment_json`、`last_job_id`、`last_error` 三个新列。
+  2. **去掉自动挖掘**：`_on_file_content_replaced` 改为只设 `mined=0`，不删贡献、不重算候选、不创建 job。文件修改后状态显示"已变动"，用户手动选择重挖。
+  3. **队列 API + 独立 Tab**：后端新增 `GET /jobs`（含文件名）`、GET /jobs/{id}`、`POST /jobs/{id}/cancel`；前端新增独立"挖掘队列" Tab，可展开行显示每个文件的名称/状态/开始时间/完成时间，5s 自动轮询。
+  4. **批量选择修复**：文件表格 `checked-row-keys` 绑定到 `selectedFiles`，勾选后实际传入 `startMining`。
+
+  ### 二、后续发现的额外 Bug 修复
+
+  5. **"已变动"状态优先级 Bug**：`/files` API 状态派生中，旧 `job_item` 的 "completed" 会覆盖 "changed" 判断。修正为 `mined=0 and mined_at is not None` 检查优先于 `status_map` 查询（commit `1bce176`）。
+
+  6. **文件修改后候选数据被误删**：原始 `_on_file_content_replaced` 会删除 `candidate_contribution` 并重算候选分数，导致已确认的图谱信息丢失。修正为只标记 `mined=0`，完全不动贡献和候选数据。等用户手动重挖时，MiningWorker 才会覆盖旧贡献并触发 recalculate（commit `1bce176`）。
+
+  ### 三、管理员讨论确认的需求变更（重要）
+
+  以下是与管理员逐条讨论确认的变更，涉及设计文档 §6 状态机和 §6.6 终态保护规则的调整：
+
+  #### 3.1 状态机简化：5 状态 → 3 状态
+
+  **旧设计**（5 状态）：`pending`、`ready_for_review`、`graph`、`non_graph`、`rejected`
+
+  **新设计**（3 状态）：`pending`、`graph`、`rejected`
+
+  变更理由：
+  - `ready_for_review` 从未被任何代码实际写入，是死状态，直接删除
+  - `non_graph` 和 `rejected` 本质相同（都是人审过的"非图谱依赖"），区别仅在于 `non_graph` 多了个 reason 字段。管理员确认拒绝也可以有原因，合并为同一个状态即可，不需要两个概念
+
+  **新的状态流转：**
+  ```
+  pending → graph（接受/入图谱）
+  pending → rejected（拒绝）
+  graph → pending（回退）
+  rejected → pending（回退）
+  ```
+
+  #### 3.2 `review_route`（auto/llm/manual）语义变更
+
+  **旧设计**：`review_route` 表示审核路由，`auto` 表示自动入图谱、`llm` 表示走 LLM、`manual` 表示人工审核
+
+  **新设计**：`review_route` 仅表示代码计算出的置信度等级标签，与状态无关，不影响任何流转。所有入图谱/拒绝操作都需要人工确认。
+  - `auto`（>= 0.85）：高置信度，建议可批量入图谱
+  - `llm`（0.50 ~ 0.85）：中等，建议先跑 LLM 评估
+  - `manual`（< 0.50）：低概率，需仔细人工审核
+  - 所有等级的候选都可以跑 LLM 评估，auto 也可以
+  - 前端用 tag 标签展示等级（高/中/低），方便用户筛选
+
+  #### 3.3 `rejected` 终态保护规则变更
+
+  **旧设计**（§6.6）：`rejected` 遇新证据自动激活回 `pending`
+
+  **新设计**：`rejected` 为终态，新证据只更新分数/证据，**不改变状态**。理由：人既然审过拒绝了，出现的新证据视为伪证据。用户如果想重新考虑，需要手动点"回退"回到 pending。
+
+  #### 3.4 零贡献处理规则
+
+  - `graph`：零贡献时保留记录，清零分数（终态保护）
+  - `rejected`：零贡献时保留记录，清零分数（终态保护）
+  - `pending`：零贡献时直接删除候选记录（没有证据就没有存在意义）
+
+  #### 3.5 文件修改行为（再次确认）
+
+  - 文件修改：**只标记 `mined=0`**，不动任何候选/贡献数据
+  - 用户手动重挖：MiningWorker 覆盖旧 contribution，触发 recalculate
+  - 重挖时终态候选（graph/rejected）：分数/证据更新，状态不变
+  - 重挖时 pending 候选：分数/证据/review_route 正常更新
+
+  ### 四、实现落地
+
+  以上所有变更已实现并提交（commit `2a3b4d0`），具体改动：
+
+  **后端：**
+  - `candidate_service.py`：`rejected` 为终态（与 `graph` 同等保护），新证据不激活；零贡献时保留记录
+  - `main.py`：删除 `mark-non-graph` 路由；`reject` 只允许 `pending→rejected`；`revert` 支持 `graph→pending` 和 `rejected→pending`；删除 `non_graph_reason`/`non_graph_reviewer` 列；`list_candidates` 移除这两个字段
+
+  **前端：**
+  - `graph-mining.ts`：`Candidate.status` 类型收窄为 `"pending" | "graph" | "rejected"`；删除 `markNonGraph` 函数；新增 `JobItemInfo` 接口和 `fetchJobs`/`cancelJob`
+  - `GraphMining.vue`：删除"非图谱"按钮/弹窗/相关状态；新增 `review_route` 等级标签列（高/中/低 tag）；操作按钮简化（pending→接受/拒绝，graph/rejected→回退）；`statusFilterOptions` 只保留 3 个选项
+
+  **测试：**
+  - test_05：验证 rejected 终态保护（新证据不激活，但分数更新）
+  - test_06：验证 rejected 零贡献时记录保留（不被删除）
+  - 后端 6 tests passed / 0 failed
+  - 前端 vue-tsc --noEmit 通过
+
+  ### 五、已知未完成项
+
+  - `command_instance` 表为空是正常的（graph_mining 不依赖它）
+  - 设计文档 §6/§6.6 仍为旧版描述（5 状态、rejected 自动激活），需要管理员确认是否回写更新
+  - 测试用例从原来的 10 个减少到 6 个（移除了 test_07~test_10 中涉及 `non_graph`/`ready_for_review`/旧状态机的用例），后续可补充完整状态机测试
+
+- 预期动作：
+  - Codex 对以上修复和需求变更进行复审
+  - 管理员确认需求变更是否符合预期
