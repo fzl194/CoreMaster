@@ -56,6 +56,14 @@ Claude 不应主动覆盖：
 
 ### 4.2 `AGENT_MESSAGES.md`
 
+**铁律：Claude 每次向 `docs/messages/<task-id>.md` 追加消息后，必须立即同步在 `AGENT_MESSAGES.md` 追加对应的摘要索引行。**
+
+这是一个两步操作，缺一不可：
+1. 写 `docs/messages/<task-id>.md`（完整消息正文）
+2. 写 `AGENT_MESSAGES.md`（追加一行摘要索引）
+
+如果只做了第 1 步而忘了第 2 步，等于消息对外不可见，Codex 和管理员在索引中看不到新消息。这是 Claude 反复犯的错误，**必须杜绝**。
+
 Claude 不在这里写长消息。这里只追加摘要索引。
 
 ### 4.3 `docs/messages/<task-id>.md`
