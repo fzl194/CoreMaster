@@ -122,8 +122,7 @@
 import { ref, computed, onMounted, onUnmounted, h } from "vue";
 import {
   NPageHeader, NSelect, NTabs, NTabPane, NSpace, NButton, NDataTable, NTag,
-  NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NDivider, NModal,
-  NCard, NInput, useMessage,
+  NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NDivider, useMessage,
 } from "naive-ui";
 import type { DataTableColumns } from "naive-ui";
 import {
@@ -152,9 +151,6 @@ const candidateStatusFilter = ref<string | null>(null);
 const selectedFiles = ref<number[]>([]);
 const showEvidence = ref(false);
 const selectedCandidate = ref<Candidate | null>(null);
-const showMarkNonGraph = ref(false);
-const markNonGraphTarget = ref<number | null>(null);
-const nonGraphReason = ref("");
 let queueTimer: ReturnType<typeof setInterval> | null = null;
 
 // Computed
@@ -284,11 +280,12 @@ const candidateColumns = computed<DataTableColumns<Candidate>>(() => [
   {
     title: "等级", key: "review_route", width: 80,
     render: (row) => {
-      if (!row.review_route) return "—";
+      const route = row.review_route ?? "";
+      if (!route) return "—";
       const typeMap: Record<string, string> = { auto: "success", llm: "warning", manual: "default" };
       const labelMap: Record<string, string> = { auto: "高", llm: "中", manual: "低" };
-      return h(NTag, { size: "small", type: (typeMap[row.review_route] || "default") as any }, {
-        default: () => labelMap[row.review_route] || row.review_route,
+      return h(NTag, { size: "small", type: (typeMap[route] || "default") as any }, {
+        default: () => labelMap[route] || route,
       });
     },
   },
@@ -400,8 +397,8 @@ async function loadJobs() {
   }
 }
 
-function onCheckedFilesChange(keys: number[]) {
-  selectedFiles.value = keys;
+function onCheckedFilesChange(keys: Array<string | number>) {
+  selectedFiles.value = keys as number[];
 }
 
 function onTabChange() {
@@ -475,24 +472,6 @@ async function handleReject(id: number) {
     loadCandidates();
   } catch (e: any) {
     message.error("拒绝失败: " + e.message);
-  }
-}
-
-function openMarkNonGraph(id: number) {
-  markNonGraphTarget.value = id;
-  nonGraphReason.value = "";
-  showMarkNonGraph.value = true;
-}
-
-async function confirmMarkNonGraph() {
-  if (!markNonGraphTarget.value) return;
-  try {
-    await markNonGraph(markNonGraphTarget.value, nonGraphReason.value || "", "user");
-    message.success("已标记为非图谱");
-    showMarkNonGraph.value = false;
-    loadCandidates();
-  } catch (e: any) {
-    message.error("标记失败: " + e.message);
   }
 }
 

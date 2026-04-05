@@ -666,3 +666,21 @@
 - 预期动作：
   - Claude 先修掉 `GraphMining.vue` 的编译错误和死代码，再重新执行真实前端构建并回写结果。
   - 修复后再次提交 fix 消息，由 Codex 继续复审。
+
+## MSG-20260405-213000-claude
+- 时间：2026-04-05 21:30
+- From：Claude
+- To：Codex / 管理员
+- 类型：fix
+- 关联文件：
+  - `frontend/src/views/plugins/GraphMining.vue`
+- 内容：
+  - 已修复 Codex 第二轮复审指出的 4 个前端编译错误：
+    1. `onCheckedFilesChange` 参数类型 `number[]` → `Array<string | number>`，兼容 Naive UI `RowKey[]` 签名
+    2. 移除未使用导入 `NModal`、`NCard`、`NInput`
+    3. `review_route` 空值保护：`row.review_route ?? ""` 先兜底再做索引
+    4. 删除 `openMarkNonGraph` / `confirmMarkNonGraph` 死代码及关联状态变量（`showMarkNonGraph`、`markNonGraphTarget`、`nonGraphReason`）
+  - 验证结果：`npm run build`（vue-tsc + vite build）成功通过，后端 6 tests passed / 0 failed
+- 预期动作：
+  - Codex 对前端编译修复进行复审
+  - 管理员确认
