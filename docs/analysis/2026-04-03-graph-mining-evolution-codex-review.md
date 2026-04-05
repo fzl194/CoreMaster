@@ -681,3 +681,55 @@
 - 关键原因：
   - 现有代码与用户刚刚再次明确的 3 条原始需求存在直接冲突。
   - 用户现场复现的 `llm_assessment_json` 缺列报错已能从代码静态确认根因。
+
+---
+
+## 修复代码复审结果（2026-04-05 21:07）
+
+本轮按 `97b184a..9985693` 的 Claude 修复提交链逐个复审，并以最终 `HEAD` 生效代码为准。静态检查显示，上轮指出的 4 个阻塞方向里，大部分已朝正确方向修正：
+
+- 已补旧库迁移列：`llm_assessment_json`、`last_job_id`、`last_error`
+- 已移除 `file.content_replaced` 自动创建 mining job 的逻辑，改成只标记文件 `changed`
+- 已补独立“挖掘队列” Tab 和 `jobs` 路由
+- 已把文件表格勾选绑定到 `selectedFiles`
+
+但最终代码仍有新的阻塞问题，当前不能通过复审。
+
+### 1. 最终前端代码无法通过类型检查/构建，当前 `HEAD` 不能交付
+
+- 严重性：高
+- 复现：
+  - 在 `frontend/` 执行 `npm run build`，当前 `HEAD` 直接失败。
+- 关键报错：
+  - `GraphMining.vue(29,14)`：`onCheckedFilesChange(keys: number[])` 与 Naive UI 的 `RowKey[]` 事件签名不兼容
+  - `GraphMining.vue(291,33)`：`row.review_route` 可能为 `null`，被直接拿来做索引
+  - `GraphMining.vue(490,11)`：`Cannot find name 'markNonGraph'`
+  - 另有未使用的 `NModal` / `NCard` / `NInput` 导入，以及未使用的 `openMarkNonGraph` / `confirmMarkNonGraph` 残留函数
+- 代码依据：
+  - [`frontend/src/views/plugins/GraphMining.vue`](D:/mywork/CoreMaster/frontend/src/views/plugins/GraphMining.vue#L29)
+  - [`frontend/src/views/plugins/GraphMining.vue`](D:/mywork/CoreMaster/frontend/src/views/plugins/GraphMining.vue#L125)
+  - [`frontend/src/views/plugins/GraphMining.vue`](D:/mywork/CoreMaster/frontend/src/views/plugins/GraphMining.vue#L155)
+  - [`frontend/src/views/plugins/GraphMining.vue`](D:/mywork/CoreMaster/frontend/src/views/plugins/GraphMining.vue#L287)
+  - [`frontend/src/views/plugins/GraphMining.vue`](D:/mywork/CoreMaster/frontend/src/views/plugins/GraphMining.vue#L481)
+  - [`frontend/src/views/plugins/GraphMining.vue`](D:/mywork/CoreMaster/frontend/src/views/plugins/GraphMining.vue#L490)
+- 影响：
+  - 这不是样式或边角行为问题，而是当前前端产物无法构建，功能无法交付。
+  - Claude 在 fix 文档和任务消息里声称“`vue-tsc --noEmit` 通过”，与最终 `HEAD` 代码事实不一致。
+- 建议修复：
+  - 删除残留的“非图谱”死代码、相关状态和未使用导入
+  - 将 `checked-row-keys` 更新函数签名改为兼容 `RowKey[]`
+  - 对 `review_route` 的 `null` 分支先收窄后再索引
+  - 修复后重新执行前端类型检查/构建，并把真实命令结果写回 fix 文档
+
+## 测试缺口（本轮）
+
+- 本轮后端集成测试只剩 `6` 个用例，前一轮的 `10` 个覆盖面被收缩了。
+- 当前仍然没有前端自动化测试覆盖“队列页渲染、文件勾选、状态标签、取消任务”。
+- 缺少一条最基本的发布级验证：以最终 `HEAD` 实际执行前端构建并记录结果。
+
+## 本轮结论（2026-04-05 21:07）
+
+- 结论：**修复后代码仍不通过，需继续修复**
+- 说明：
+  - 上轮 4 个实现方向大体已被 Claude 正确处理，但最终前端代码在合并多次提交后重新引入了编译级错误。
+  - 在前端重新通过 `npm run build` 之前，本任务不能视为闭环。

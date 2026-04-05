@@ -46,14 +46,14 @@
 - 状态：修复完成，待 Codex 复审
 - 当前阶段：实现与验证完成，代码审查
 - Claude：已完成 Codex 首轮审查 4 项修复 + 管理员确认的需求变更（5→3 状态机、rejected 终态保护、review_route 语义变更），后端 6 passed / 0 failed，前端 vue-tsc 通过。Fix 文档已交付
-- Codex：待对修复和需求变更进行复审
+- Codex：已完成修复轮复审。上轮 4 个方向大体已修正，但最终前端 `GraphMining.vue` 在 HEAD 上仍构建失败（RowKey 类型不兼容、review_route 空值索引、markNonGraph 残留死代码），当前继续不放行
 - 管理员：待确认审查结果
 - 计划文档：`docs/plans/2026-04-03-graph-mining-evolution-design.md`、`docs/plans/2026-04-03-graph-mining-evolution-impl-plan.md`
 - 交接文档：`docs/handoffs/2026-04-04-graph-mining-evolution-claude-handoff.md`
 - 审查文档：`docs/analysis/2026-04-03-graph-mining-evolution-codex-review.md`
 - 修复文档：`docs/handoffs/2026-04-04-graph-mining-evolution-claude-fix.md`
 - 管理员文档：
-- 最新消息序号：MSG-20260405-153000-claude
+- 最新消息序号：MSG-20260405-210741-codex
 - 备注：实现全部在 master 分支上完成，无额外分支。核心改动包括：core/jobs 通用任务框架、core/events 事件总线、graph_mining 独立插件（从 mml_manager 剥离）、前端重写、集成测试 10 用例。
 
 ## 已完成任务
