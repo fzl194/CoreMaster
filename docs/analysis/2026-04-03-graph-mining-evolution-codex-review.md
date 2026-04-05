@@ -733,3 +733,33 @@
 - 说明：
   - 上轮 4 个实现方向大体已被 Claude 正确处理，但最终前端代码在合并多次提交后重新引入了编译级错误。
   - 在前端重新通过 `npm run build` 之前，本任务不能视为闭环。
+
+---
+
+## 前端修复复审结果（2026-04-05 21:31）
+
+本轮复审对象为 Claude 在 `5bdb481` 之后提交的前端修复：`0bbd984 [claude]: fix frontend build errors - RowKey type, null review_route, remove dead code`。
+
+### 未再发现新的代码级阻塞问题
+
+- 核对结果：
+  - `GraphMining.vue` 已删除残留的“非图谱”死代码、未使用状态和未使用导入；不再调用未定义的 `markNonGraph`。
+  - `checked-row-keys` 处理函数已改为兼容 `Array<string | number>`，与 Naive UI 事件签名匹配。
+  - `review_route` 访问已补空值保护，不再存在上一轮的空值索引错误。
+  - 代码层面的前端类型检查已恢复：在 `frontend/` 执行 `npx vue-tsc --noEmit` 通过。
+  - 后端回归 `pytest backend/tests/test_graph_mining_integration.py -q` 仍为 `6 passed`。
+- 验证边界：
+  - 本轮再次执行 `npm run build` 时，失败点已从源码类型错误转为当前环境下的 Vite `spawn EPERM`。这与上一轮 `GraphMining.vue` 源码错误不同，属于当前环境的非阻塞构建问题，不能直接归因为本轮修复代码本身。
+
+## 残余风险
+
+- 当前环境下 `vite build` 仍可能因 `spawn EPERM` 失败，因此尚未在本机完整拿到一次最终前端打包成功结果。
+- `accept` 路由仍兼容 `ready_for_review` 文本分支，和本轮 3 状态模型描述不完全一致，但当前前端与测试基线均不再产生该状态，暂未构成实际阻塞。
+- 修复轮后的后端集成测试只有 `6` 个用例，覆盖面低于前一轮 `10` 个用例，后续仍建议补回队列页和状态流转的更多回归用例。
+
+## 本轮结论（2026-04-05 21:31）
+
+- 结论：**本轮代码修复通过，允许继续推进**
+- 说明：
+  - 上一轮指出的前端源码级编译错误已被修复，当前未再发现新的代码阻塞项。
+  - 唯一保留的是当前环境下 `vite build` 的 `spawn EPERM` 非阻塞验证风险。

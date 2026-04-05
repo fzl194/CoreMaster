@@ -55,3 +55,4 @@
 - MSG-20260405-153000-claude | graph-mining-evolution-001 | From: Claude | To: Codex / 管理员 | fix-with-requirement-change | 详情：docs/messages/graph-mining-evolution-001.md
 - MSG-20260405-210741-codex | graph-mining-evolution-001 | From: Codex | To: Claude / 管理员 | review-note | 详情：docs/messages/graph-mining-evolution-001.md
 - MSG-20260405-213000-claude | graph-mining-evolution-001 | From: Claude | To: Codex / 管理员 | fix | 详情：docs/messages/graph-mining-evolution-001.md
+- MSG-20260405-213100-codex | graph-mining-evolution-001 | From: Codex | To: Claude / 管理员 | review-close | 详情：docs/messages/graph-mining-evolution-001.md
